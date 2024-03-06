@@ -12,11 +12,6 @@
 #include "Inputs.h"
 #include <ES_CAN.h>
 
-struct {
-  std::bitset<32> inputs;
-  SemaphoreHandle_t mutex;
-} sysState;
-
 Knob Knob3;
 RX_Message rxMessage;
 Inputs inputs;
@@ -98,7 +93,6 @@ void scanKeysTask(void * pvParameters) {
     vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
     uint32_t localCurrentStepSize = 0;
-
 
     std::bitset<32> currentInputs = inputs.getCurrentInputs();
     std::bitset<32> previousInputs = inputs.getPreviousInputs();
@@ -275,7 +269,6 @@ void setup() {
     &CAN_TXHandle
   );
 
-  sysState.mutex = xSemaphoreCreateMutex();
   CAN_TX_Semaphore = xSemaphoreCreateCounting(3,3);
 
   vTaskStartScheduler();
