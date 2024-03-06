@@ -91,7 +91,6 @@ void CAN_TX_ISR (void) {
 void scanKeysTask(void * pvParameters) {
   const TickType_t xFrequency = 20/portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  std::bitset<32> previousInputs;
   uint8_t TX_Message[8] = {0};
   TX_Message[1] = 4; // Octave to be changed later - try auto assigning this.
 
@@ -100,22 +99,22 @@ void scanKeysTask(void * pvParameters) {
 
     uint32_t localCurrentStepSize = 0;
 
-    xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-    std::bitset<32> localInputs = sysState.inputs;
-    xSemaphoreGive(sysState.mutex);
+
+    std::bitset<32> currentInputs = inputs.getCurrentInputs();
+    std::bitset<32> previousInputs = inputs.getPreviousInputs();
 
     for(int row = 0; row < 4; row++){
       setRow(row);
       delayMicroseconds(3);
       for (int bit = 0; bit < 4; ++bit) {
-          localInputs[row * 4 + bit] = readCols()[bit];
+          currentInputs[row * 4 + bit] = readCols()[bit];
       }
     }
 
-    Knob3.updateRotation(std::to_string(localInputs[13]) + std::to_string(localInputs[12]));
+    Knob3.updateRotation(std::to_string(currentInputs[13]) + std::to_string(currentInputs[12]));
 
     for(int i = 0; i < 12; i++){
-      if(localInputs[i]){
+      if(currentInputs[i]){
         localCurrentStepSize = stepSizes[i];
         TX_Message[2] = i;
         if(!previousInputs[i]){
@@ -130,11 +129,7 @@ void scanKeysTask(void * pvParameters) {
 
     xQueueSend( msgOutQ, TX_Message, portMAX_DELAY);
 
-    previousInputs = localInputs;
-
-    xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-    sysState.inputs = localInputs;
-    xSemaphoreGive(sysState.mutex);
+    inputs.updateInputs(currentInputs);
   }
 }
 
