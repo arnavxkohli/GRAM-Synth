@@ -9,16 +9,17 @@
 #include "Knob.h"
 #include "Globals.h"
 #include "RX_Message.h"
+#include "Inputs.h"
 #include <ES_CAN.h>
 
 struct {
   std::bitset<32> inputs;
-  const char* notePlayed = "Play a note...";
   SemaphoreHandle_t mutex;
 } sysState;
 
 Knob Knob3;
 RX_Message rxMessage;
+Inputs inputs;
 QueueHandle_t msgInQ;
 QueueHandle_t msgOutQ;
 
@@ -101,7 +102,6 @@ void scanKeysTask(void * pvParameters) {
 
     xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     std::bitset<32> localInputs = sysState.inputs;
-    const char* localNotePlayed = sysState.notePlayed;
     xSemaphoreGive(sysState.mutex);
 
     for(int row = 0; row < 4; row++){
@@ -117,7 +117,6 @@ void scanKeysTask(void * pvParameters) {
     for(int i = 0; i < 12; i++){
       if(localInputs[i]){
         localCurrentStepSize = stepSizes[i];
-        localNotePlayed = notes[i];
         TX_Message[2] = i;
         if(!previousInputs[i]){
           TX_Message[0] = 'P';
@@ -135,12 +134,7 @@ void scanKeysTask(void * pvParameters) {
 
     xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     sysState.inputs = localInputs;
-    sysState.notePlayed = localNotePlayed;
     xSemaphoreGive(sysState.mutex);
-
-    // ------- UNCOMMENT THIS LATER -------
-    // Need to ask why the receive queue implementation is wrong here.
-    // ------- UNCOMMENT THIS LATER -------
   }
 }
 
