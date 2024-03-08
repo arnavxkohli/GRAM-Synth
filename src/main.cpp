@@ -1,343 +1,92 @@
+
 #include <Arduino.h>
-#include <U8g2lib.h>
-#include <bitset>
-#include <cmath>
-#include <STM32FreeRTOS.h>
-#include <cstddef>
-#include <string>
-#include <cstring>
-#include "Knob.h"
-#include "Globals.h"
-#include "RX_Message.h"
-#include "Inputs.h"
-#include <ES_CAN.h>
+#include <stm32l4xx_hal.h>
+#include <stm32l4xx_hal_cortex.h>
+#include <stm32l4xx_hal_dac.h>
+#include <stm32l4xx_hal_rcc.h>
+#include <stm32l4xx_hal_gpio.h>
 
-#define SAMPLE_BUFFER_SIZE 1024
+// Buffer Size
+#define BUFFER_SIZE       100
 
-struct {
-  uint8_t sampleBuffer0[SAMPLE_BUFFER_SIZE/2];
-  uint8_t sampleBuffer1[SAMPLE_BUFFER_SIZE/2];
-  volatile bool writeBuffer1 = false;
-  SemaphoreHandle_t doubleBufferSemaphore;
-} doubleBuffer;
+// DAC Output Buffer
+uint16_t dacBuffer[BUFFER_SIZE];
 
-Knob Knob3;
-RX_Message rxMessage;
-Inputs inputs;
-QueueHandle_t msgInQ;
-QueueHandle_t msgOutQ;
+// DAC Handle
+DAC_HandleTypeDef hdac;
+GPIO_InitTypeDef GPIO_InitStruct;
 
-SemaphoreHandle_t CAN_TX_Semaphore;
+// DMA Handle
+DMA_HandleTypeDef hdma_dac;
 
-//Display driver object
-U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
-
-//Function to set outputs using key matrix
-void setOutMuxBit(const uint8_t bitIdx, const bool value) {
-  digitalWrite(REN_PIN,LOW);
-  digitalWrite(RA0_PIN, bitIdx & 0x01);
-  digitalWrite(RA1_PIN, bitIdx & 0x02);
-  digitalWrite(RA2_PIN, bitIdx & 0x04);
-  digitalWrite(OUT_PIN,value);
-  digitalWrite(REN_PIN,HIGH);
-  delayMicroseconds(2);
-  digitalWrite(REN_PIN,LOW);
-}
-
-std::bitset<4> readCols(){
-  std::bitset<4> result;
-
-  result[0] = !digitalRead(C0_PIN);
-  result[1] = !digitalRead(C1_PIN);
-  result[2] = !digitalRead(C2_PIN);
-  result[3] = !digitalRead(C3_PIN);
-
-  return result;
-}
-
-void setRow(uint8_t rowIdx){
-  digitalWrite(REN_PIN, LOW);
-  std::bitset<3> rowBits = std::bitset<3>(rowIdx);
-
-  digitalWrite(RA0_PIN, rowBits[0]);
-  digitalWrite(RA1_PIN, rowBits[1]);
-  digitalWrite(RA2_PIN, rowBits[2]);
-
-  digitalWrite(REN_PIN, HIGH);
-}
-
-void sampleISR(){
-  static uint32_t phaseAcc = 0;
-  uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-  uint8_t localRotation = Knob3.getRotationISR();
-
-  phaseAcc += localCurrentStepSize;
-
-  int32_t Vout = (phaseAcc >> 24) - 128;
-
-  // localRotation used for volume before or after the 128?
-  Vout = Vout >> (8 - localRotation);
-
-  analogWrite(OUTR_PIN, Vout + 128);
-}
-
-void CAN_RX_ISR (void) {
-  uint8_t RX_Message_ISR[8];
-  uint32_t ID;
-  CAN_RX(ID, RX_Message_ISR);
-  xQueueSendFromISR(msgInQ, RX_Message_ISR, NULL);
-}
-
-void CAN_TX_ISR (void) {
-  xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL);
-}
-
-void scanKeysTask(void * pvParameters) {
-  const TickType_t xFrequency = 20/portTICK_PERIOD_MS;
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  uint8_t TX_Message[8] = {0};
-  TX_Message[1] = 4; // Octave to be changed later - try auto assigning this.
-
-  while(1){
-    vTaskDelayUntil( &xLastWakeTime, xFrequency );
-
-    uint32_t localCurrentStepSize = 0;
-
-    std::bitset<32> currentInputs = inputs.getCurrentInputs();
-    std::bitset<32> previousInputs = inputs.getPreviousInputs();
-
-    for(int row = 0; row < 4; row++){
-      setRow(row);
-      delayMicroseconds(3);
-      for (int bit = 0; bit < 4; ++bit) {
-          currentInputs[row * 4 + bit] = readCols()[bit];
-      }
-    }
-
-    Knob3.updateRotation(std::to_string(currentInputs[13]) + std::to_string(currentInputs[12]));
-
-    for(int i = 0; i < 12; i++){
-      if(currentInputs[i]){
-        localCurrentStepSize = stepSizes[i];
-        TX_Message[2] = i;
-        if(!previousInputs[i]){
-          TX_Message[0] = 'P';
-          __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
-        }
-      }
-      else if (previousInputs[i]) {
-        TX_Message[0] = 'R';
-      }
-    }
-
-    xQueueSend( msgOutQ, TX_Message, portMAX_DELAY);
-
-    inputs.updateInputs(currentInputs);
-  }
-}
-
-void displayUpdateTask(void * pvParameters){
-  const TickType_t xFrequency = 100/portTICK_PERIOD_MS;
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  uint32_t ID;
-  uint8_t localRX[8];
-
-  while(1){
-    vTaskDelayUntil( &xLastWakeTime, xFrequency );
-
-    //Update display
-    u8g2.clearBuffer();         // clear the internal memory
-
-    u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-    u8g2.drawStr(2, 10, "GRAM-Synth");  // write something to the internal memory
-    u8g2.setCursor(2, 20);
-
-    u8g2.print("Volume: ");
-    u8g2.print(Knob3.getRotation());
-
-    // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-    // u8g2.drawStr(2, 30, sysState.notePlayed);
-    // xSemaphoreGive(sysState.mutex);
-    memcpy(localRX, rxMessage.getRX_Message(), 8);
-    u8g2.setCursor(66,30);
-    u8g2.print((char) localRX[0]);
-    u8g2.print(localRX[1]);
-    u8g2.print(localRX[2]);
-
-    u8g2.sendBuffer();          // transfer internal memory to the display
-
-    //Toggle LED
-    digitalToggle(LED_BUILTIN);
-  }
-}
-
-void CAN_RX_Task(void* pvParameters){
-  uint8_t local_RX[8];
-
-  while(1){
-    xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
-    rxMessage.receiveMessage(local_RX);
-    __atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
-  }
-}
-
-void CAN_TX_Task (void * pvParameters) {
-  uint8_t msgOut[8];
-
-  while (1) {
-    xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
-    xSemaphoreTake(CAN_TX_Semaphore, portMAX_DELAY);
-    CAN_TX(0x123, msgOut);
-    //xSemaphoreGive(CAN_TX_Semaphore);
-  }
-}
-
-void doubleBufferISR(){
-  static uint32_t readCtr = 0;
-  
-
-  if (readCtr == SAMPLE_BUFFER_SIZE/2) {
-    readCtr = 0;
-    doubleBuffer.writeBuffer1 = !doubleBuffer.writeBuffer1;
-    xSemaphoreGiveFromISR(doubleBuffer.doubleBufferSemaphore, NULL);
-    }
-    
-  if (doubleBuffer.writeBuffer1)
-    analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer0[readCtr++]);
-  else
-    analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer1[readCtr++]);
-}
-
-void doubleBufferTask(void* pvParameters){
-
-  static uint32_t phaseAcc = 0;
-
-  while(1){
-
-    xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
-    for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
-
-      uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-      uint8_t localRotation = Knob3.getRotationISR();
-      phaseAcc += localCurrentStepSize;
-
-      int32_t Vout = (phaseAcc >> 24) - 128; //Calculate one sample
-
-      Vout = Vout >> (8 - localRotation);
-
-      if (doubleBuffer.writeBuffer1)
-        doubleBuffer.sampleBuffer1[writeCtr] = Vout + 128;
-      else
-        doubleBuffer.sampleBuffer0[writeCtr] = Vout + 128;
-    }
-  }
-}
+// Function prototypes
+void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac);
+void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac);
+void HAL_DAC_ErrorCallbackCh1(DAC_HandleTypeDef *hdac);
+void HAL_DAC_DMAUnderrunCallbackCh1(DAC_HandleTypeDef *hdac);
 
 void setup() {
-  // put your setup code here, to run once:
 
-  //Set pin directions
-  pinMode(RA0_PIN, OUTPUT);
-  pinMode(RA1_PIN, OUTPUT);
-  pinMode(RA2_PIN, OUTPUT);
-  pinMode(REN_PIN, OUTPUT);
-  pinMode(OUT_PIN, OUTPUT);
-  pinMode(OUTL_PIN, OUTPUT);
-  pinMode(OUTR_PIN, OUTPUT);
-  pinMode(LED_BUILTIN, OUTPUT);
+    // Configure DAC_OUT1 pin (PA4) in analog mode
+    GPIO_InitStruct.Pin = GPIO_PIN_4;
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  pinMode(C0_PIN, INPUT);
-  pinMode(C1_PIN, INPUT);
-  pinMode(C2_PIN, INPUT);
-  pinMode(C3_PIN, INPUT);
-  pinMode(JOYX_PIN, INPUT);
-  pinMode(JOYY_PIN, INPUT);
+    Serial.begin(9600);
 
-  //Initialise display
-  setOutMuxBit(DRST_BIT, LOW);  //Assert display logic reset
-  delayMicroseconds(2);
-  setOutMuxBit(DRST_BIT, HIGH);  //Release display logic reset
-  u8g2.begin();
-  setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
+    HAL_Init();
 
-  //Initialise UART
-  Serial.begin(9600);
+    // Initialize DAC
+    hdac.Instance = DAC1;
+    __HAL_RCC_DAC1_CLK_ENABLE();
+    
+    if (HAL_DAC_Init(&hdac) != HAL_OK) {
+      // Initialization Error
+      Serial.println("DAC Init Error");
+      while (1);
+    }
 
-  msgInQ = xQueueCreate(36,8);
-  msgOutQ = xQueueCreate(36,8);
+    // Initialize DAC Channel
+    DAC_ChannelConfTypeDef sConfig;
+    sConfig.DAC_Trigger = DAC_TRIGGER_NONE; // DAC_TRIGGER_NONE because we're not using DMA_TRIGGER
+    sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+    if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK) {
+      // Channel Configuration Error
+      Serial.println("DAc Config Error");
+      while (1);
+    }
 
-  TIM_TypeDef *Instance = TIM1;
-  HardwareTimer *sampleTimer = new HardwareTimer(Instance);
+    __HAL_RCC_DMA1_CLK_ENABLE();
+    hdma_dac.Instance = DMA1_Channel3;
+    hdma_dac.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    hdma_dac.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_dac.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_dac.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
+    hdma_dac.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+    hdma_dac.Init.Mode = DMA_CIRCULAR;
+    hdma_dac.Init.Priority = DMA_PRIORITY_HIGH;
+    HAL_DMA_Init(&hdma_dac);
 
-  sampleTimer->setOverflow(22000, HERTZ_FORMAT);
-  sampleTimer->attachInterrupt(doubleBufferISR);
-  sampleTimer->resume();
+    // Link DMA Handle to DAC Channel
+    __HAL_LINKDMA(&hdac, DMA_Handle1, hdma_dac);
 
-  CAN_Init(true);
-  setCANFilter(0x123,0x7ff);
-  CAN_RegisterRX_ISR(CAN_RX_ISR);
-  CAN_RegisterTX_ISR(CAN_TX_ISR);
-  CAN_Start();
+    // Generate sample data
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+      dacBuffer[i] = i * (4095 / BUFFER_SIZE); // Linear ramp from 0 to 4095
+    }
 
-  TaskHandle_t scanKeysHandle = NULL;
-  TaskHandle_t displayUpdateHandle = NULL;
-  TaskHandle_t CAN_RXHandle = NULL;
-  TaskHandle_t CAN_TXHandle = NULL;
-  TaskHandle_t doubleBufferHandle = NULL;
+    // Start DAC with DMA
+    if (HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)dacBuffer, BUFFER_SIZE, DAC_ALIGN_12B_R) != HAL_OK) {
+      // DAC Start Error
+      Serial.println("DAC Transfer Error");
+      while (1);
+    }
 
-  xTaskCreate(
-    displayUpdateTask, /* Function that implements the task */
-    "displayUpdate", /* Text name for the task */
-    256, /* Stack size in words, not bytes */
-    NULL, /* Parameter passed into the task */
-    1, /* Task priority */
-    &displayUpdateHandle /* Pointer to store the task handle */
-  );
-
-  xTaskCreate(
-    scanKeysTask,		/* Function that implements the task */
-    "scanKeys",		/* Text name for the task */
-    256,      		/* Stack size in words, not bytes */
-    NULL,			/* Parameter passed into the task */
-    1,			/* Task priority */
-    &scanKeysHandle /* Pointer to store the task handle */
-  );
-
-  xTaskCreate(
-    CAN_RX_Task,
-    "CAN_RX_Task",
-    64,
-    NULL,
-    1,
-    &CAN_RXHandle
-  );
-
-  xTaskCreate(
-    CAN_TX_Task,
-    "CAN_TX_Task",
-    64,
-    NULL,
-    1,
-    &CAN_TXHandle
-  );
-
-  
-  xTaskCreate(
-  doubleBufferTask,	
-  "doubleBuffer",	
-  256,  
-  NULL,	
-  3,			
-  &doubleBufferHandle );	
-
-  CAN_TX_Semaphore = xSemaphoreCreateCounting(3,3);
-  doubleBuffer.doubleBufferSemaphore = xSemaphoreCreateBinary();
-
-  xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
-
-  vTaskStartScheduler();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+    Serial.println("Transfer ongoing...");
+    delay(1000);
 }
+
