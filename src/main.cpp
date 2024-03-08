@@ -12,6 +12,15 @@
 #include "Inputs.h"
 #include <ES_CAN.h>
 
+#define SAMPLE_BUFFER_SIZE 1024
+
+struct {
+  uint8_t sampleBuffer0[SAMPLE_BUFFER_SIZE/2];
+  uint8_t sampleBuffer1[SAMPLE_BUFFER_SIZE/2];
+  volatile bool writeBuffer1 = false;
+  SemaphoreHandle_t doubleBufferSemaphore;
+} doubleBuffer;
+
 Knob Knob3;
 RX_Message rxMessage;
 Inputs inputs;
@@ -140,9 +149,10 @@ void displayUpdateTask(void * pvParameters){
     u8g2.clearBuffer();         // clear the internal memory
 
     u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-    u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
+    u8g2.drawStr(2, 10, "GRAM-Synth");  // write something to the internal memory
     u8g2.setCursor(2, 20);
 
+    u8g2.print("Volume: ");
     u8g2.print(Knob3.getRotation());
 
     // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
@@ -179,6 +189,47 @@ void CAN_TX_Task (void * pvParameters) {
     xSemaphoreTake(CAN_TX_Semaphore, portMAX_DELAY);
     CAN_TX(0x123, msgOut);
     //xSemaphoreGive(CAN_TX_Semaphore);
+  }
+}
+
+void doubleBufferISR(){
+  static uint32_t readCtr = 0;
+  
+
+  if (readCtr == SAMPLE_BUFFER_SIZE/2) {
+    readCtr = 0;
+    doubleBuffer.writeBuffer1 = !doubleBuffer.writeBuffer1;
+    xSemaphoreGiveFromISR(doubleBuffer.doubleBufferSemaphore, NULL);
+    }
+    
+  if (doubleBuffer.writeBuffer1)
+    analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer0[readCtr++]);
+  else
+    analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer1[readCtr++]);
+}
+
+void doubleBufferTask(void* pvParameters){
+
+  static uint32_t phaseAcc = 0;
+
+  while(1){
+
+    xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
+    for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
+
+      uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
+      uint8_t localRotation = Knob3.getRotationISR();
+      phaseAcc += localCurrentStepSize;
+
+      int32_t Vout = (phaseAcc >> 24) - 128; //Calculate one sample
+
+      Vout = Vout >> (8 - localRotation);
+
+      if (doubleBuffer.writeBuffer1)
+        doubleBuffer.sampleBuffer1[writeCtr] = Vout + 128;
+      else
+        doubleBuffer.sampleBuffer0[writeCtr] = Vout + 128;
+    }
   }
 }
 
@@ -219,7 +270,7 @@ void setup() {
   HardwareTimer *sampleTimer = new HardwareTimer(Instance);
 
   sampleTimer->setOverflow(22000, HERTZ_FORMAT);
-  sampleTimer->attachInterrupt(sampleISR);
+  sampleTimer->attachInterrupt(doubleBufferISR);
   sampleTimer->resume();
 
   CAN_Init(true);
@@ -232,6 +283,7 @@ void setup() {
   TaskHandle_t displayUpdateHandle = NULL;
   TaskHandle_t CAN_RXHandle = NULL;
   TaskHandle_t CAN_TXHandle = NULL;
+  TaskHandle_t doubleBufferHandle = NULL;
 
   xTaskCreate(
     displayUpdateTask, /* Function that implements the task */
@@ -269,7 +321,19 @@ void setup() {
     &CAN_TXHandle
   );
 
+  
+  xTaskCreate(
+  doubleBufferTask,	
+  "doubleBuffer",	
+  256,  
+  NULL,	
+  3,			
+  &doubleBufferHandle );	
+
   CAN_TX_Semaphore = xSemaphoreCreateCounting(3,3);
+  doubleBuffer.doubleBufferSemaphore = xSemaphoreCreateBinary();
+
+  xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
 
   vTaskStartScheduler();
 }
