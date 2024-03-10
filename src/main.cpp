@@ -94,18 +94,40 @@ void setRow(uint8_t rowidx){
 }
 
 void sampleISR(){
-  static uint32_t phaseAcc = 0;
-  uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
   uint8_t localRotation = volumeKnob.getRotationISR();
-
-  phaseAcc += localCurrentStepSize;
-
-  int32_t Vout = (phaseAcc >> 24) - 128;
-
-  // localRotation used for volume before or after the 128?
-  Vout = Vout >> (8 - localRotation);
-
-  analogWrite(OUTR_PIN, Vout + 128);
+	// Serial.print(nok);
+	// If there's at least a key being presses, do something
+	if (nok != 0) {
+		// Decay for those keys that are being pressed
+		for (int i = 0; i < nok; i++) {
+			decay[i] *= decay_factor;
+		}
+		// tone_idx[i] = the period index corresponding to that particular key
+		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
+		// instru = Selects the instrument, currrent is 0 - 3
+		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] + 
+					  waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] + 
+					  waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] + 
+					  waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
+					  waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
+					  waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+    // Vout = Vout >> (12 - localRotation);
+    // Sets audio resolution to 12
+    analogWriteResolution(12);
+    // The Vout is 12 bits already
+    analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
+    t ++; // increment timer
+  }
+  	// If no keys are being pressed the timer resets along with the decay factors
+	else {
+		t = 0;
+		decay[0] = 1;
+		decay[1] = 1;
+		decay[2] = 1;
+		decay[3] = 1;
+		decay[4] = 1;
+		decay[5] = 1;
+	}
 }
 
 void CAN_RX_ISR (void) {
