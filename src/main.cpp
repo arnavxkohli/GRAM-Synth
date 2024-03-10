@@ -11,8 +11,17 @@
 #include "RX_Message.h"
 #include "Inputs.h"
 #include <ES_CAN.h>
+#include "waveform.h"
+#include <stm32l4xx_hal_gpio.h>
+#include <stm32l432xx.h>
+#include <algorithm>
+#include "VolumeKnob.h"
 
-Knob Knob3;
+
+// Knob Knob1; // Adding knob 1, maybe needs a different class?
+// Knob Knob2; // Adding knob 2, maybe needs a different class?
+VolumeKnob volumeKnob; // Old definition of Knob 3
+
 RX_Message rxMessage;
 Inputs inputs;
 QueueHandle_t msgInQ;
@@ -23,16 +32,25 @@ SemaphoreHandle_t CAN_TX_Semaphore;
 //Display driver object
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
 
+// This is used so that gpio_state can be selected by integers
+const GPIO_PinState gpio_state[2] = {GPIO_PIN_RESET, GPIO_PIN_SET};
+// This stores the gpio pinouts corresponding to column idx C0 - 3
+const uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};
+
 //Function to set outputs using key matrix
 void setOutMuxBit(const uint8_t bitIdx, const bool value) {
-  digitalWrite(REN_PIN,LOW);
-  digitalWrite(RA0_PIN, bitIdx & 0x01);
-  digitalWrite(RA1_PIN, bitIdx & 0x02);
-  digitalWrite(RA2_PIN, bitIdx & 0x04);
-  digitalWrite(OUT_PIN,value);
-  digitalWrite(REN_PIN,HIGH);
-  delayMicroseconds(2);
-  digitalWrite(REN_PIN,LOW);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
+
+	delayMicroseconds(2);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, gpio_state[bitIdx & 0x01]);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, gpio_state[bitIdx & 0x02]);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, gpio_state[bitIdx & 0x04]);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, gpio_state[value]); // OUT_PIN
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_SET); // REN_PIN
+	delayMicroseconds(2);
+
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
+  // Arnav commented the above line out ----> Reset twice??
 }
 
 std::bitset<4> readCols(){
@@ -60,7 +78,7 @@ void setRow(uint8_t rowIdx){
 void sampleISR(){
   static uint32_t phaseAcc = 0;
   uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-  uint8_t localRotation = Knob3.getRotationISR();
+  uint8_t localRotation = volumeKnob.getRotationISR();
 
   phaseAcc += localCurrentStepSize;
 
@@ -105,7 +123,7 @@ void scanKeysTask(void * pvParameters) {
       }
     }
 
-    Knob3.updateRotation(std::to_string(currentInputs[13]) + std::to_string(currentInputs[12]));
+    volumeKnob.updateRotation(std::to_string(currentInputs[13]) + std::to_string(currentInputs[12]));
 
     for(int i = 0; i < 12; i++){
       if(currentInputs[i]){
@@ -143,7 +161,7 @@ void displayUpdateTask(void * pvParameters){
     u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
     u8g2.setCursor(2, 20);
 
-    u8g2.print(Knob3.getRotation());
+    u8g2.print(volumeKnob.getRotation());
 
     // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
     // u8g2.drawStr(2, 30, sysState.notePlayed);

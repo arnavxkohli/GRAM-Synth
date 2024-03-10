@@ -9,9 +9,9 @@ class Knob : public SysState {
 public:
     uint8_t getRotationISR();
     uint8_t getRotation();
-    void updateRotation(std::string BA_curr);
+    virtual void updateRotation(std::string BA_curr) = 0;
 
-private:
+protected:
     uint8_t rotation;
     std::string BA_prev;
     bool incrementLast;
