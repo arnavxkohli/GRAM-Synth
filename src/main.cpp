@@ -17,9 +17,9 @@
 #include <algorithm>
 
 
-// Knob Knob1; // Adding knob 1, maybe needs a different class?
-// Knob Knob2; // Adding knob 2, maybe needs a different class?
-Knob volumeKnob(8.0f, 0.0f, 1.0f); // Old definition of Knob 3
+Knob volumeKnob(12.0f, 0.0f, 1.0f);
+Knob decayKnob(0.99999f, 0.9995f, -0.00005f);
+Knob instrumentKnob(3.0f, 0.0f, 1.0f);
 
 RX_Message rxMessage;
 Inputs inputs;
@@ -129,6 +129,21 @@ void sampleISR(){
 	}
 }
 
+// void sampleISR(){
+//   static uint32_t phaseAcc = 0;
+//   uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
+//   uint32_t localRotation = volumeKnob.getRotationISR();
+
+//   phaseAcc += localCurrentStepSize;
+
+//   int32_t Vout = (phaseAcc >> 24) - 128;
+
+//   // localRotation used for volume before or after the 128?
+//   Vout = Vout >> (8 - localRotation);
+
+//   analogWrite(OUTR_PIN, Vout + 128);
+// }
+
 
 void CAN_RX_ISR (void) {
   uint8_t RX_Message_ISR[8];
@@ -163,7 +178,10 @@ void scanKeysTask(void * pvParameters) {
       }
     }
 
-    volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) + std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
+    volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
+      std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
+    decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
+      std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
     for(int i = 0; i < 12; i++){
       if(currentInputs[i]){
@@ -266,6 +284,16 @@ void setup() {
   setOutMuxBit(DRST_BIT, HIGH);  //Release display logic reset
   u8g2.begin();
   setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
+
+  waveform_luts.push_back(sawtooth1());
+	waveform_luts.push_back(sinewave());
+	waveform_luts.push_back(piano1());
+	waveform_luts.push_back(sawtooth2());
+
+  Ts[0] = 1;
+	for (int i = 1; i <= 12; i++) {
+		Ts[i] = 22000 / frequencies[i - 1];
+	}
 
   //Initialise UART
   Serial.begin(9600);
