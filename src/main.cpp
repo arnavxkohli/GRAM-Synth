@@ -67,18 +67,6 @@ void setOutMuxBit(const uint8_t bitIdx, const bool value) {
 	delayMicroseconds(2);
 
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
-  // Arnav commented the above line out ----> Reset twice??
-}
-
-std::bitset<4> readCols(){
-  std::bitset<4> result;
-
-  result[0] = !digitalRead(C0_PIN);
-  result[1] = !digitalRead(C1_PIN);
-  result[2] = !digitalRead(C2_PIN);
-  result[3] = !digitalRead(C3_PIN);
-
-  return result;
 }
 
 void setRow(uint8_t rowidx){
@@ -165,41 +153,77 @@ void scanKeysTask(void * pvParameters) {
   while(1){
     vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
-    uint32_t localCurrentStepSize = 0;
+    // uint32_t localCurrentStepSize = 0;
 
-    std::bitset<32> currentInputs = inputs.getCurrentInputs();
-    std::bitset<32> previousInputs = inputs.getPreviousInputs();
+    // std::bitset<32> currentInputs = inputs.getCurrentInputs();
+    // std::bitset<32> previousInputs = inputs.getPreviousInputs();
 
-    for(int row = 0; row < 4; row++){
-      setRow(row);
-      delayMicroseconds(3);
-      for (int bit = 0; bit < 4; ++bit) {
-          currentInputs[row * 4 + bit] = readCols()[bit];
-      }
-    }
+    // for(int row = 0; row < 4; row++){
+    //   setRow(row);
+    //   delayMicroseconds(3);
+    //   for (int bit = 0; bit < 4; ++bit) {
+    //       currentInputs[row * 4 + bit] = readCols()[bit];
+    //   }
+    // }
+
+    for (int i = 0; i < 12; i++) {
+			setRow(i / 4); // Floor division
+			delayMicroseconds(3);
+			// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
+			// sysState.inputs[i] = !HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]); // i % 4 iterate between 0 - 3 as i increases from 0 - 11
+			// xSemaphoreGive(sysState.mutex);
+			// 3 scnarios:
+			// 1: A key was not presses before and is now being presses
+			if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
+				press_list[i] = true; // Set the "is-pressed" entry for that key to true
+				tone_idx[nok] = i + 1;
+				TX_Message[0] = 'P';
+        TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
+				key = key + keystrings[i];
+				nok ++; // Increase the no. of key being presses
+			}
+			// 2: A key was presses before and is now being released
+			else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
+				press_list[i] = false; // Set the "is-pressed" entry for that key to true
+				key = "";
+				TX_Message[0] = 'R';
+				nok --;
+				int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
+				int idx = std::distance(tone_idx, p);
+				tone_idx[idx] = 0;
+			}
+			// 3: A key was not presses and is nor currently being presses or a key was presses and is still being pressed
+			// Skip the key detetction for those keys
+		}
+
+		setRow(3); // Select the knob row
+		delayMicroseconds(3);
 
     volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
     decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
-    for(int i = 0; i < 12; i++){
-      if(currentInputs[i]){
-        localCurrentStepSize = stepSizes[i];
-        TX_Message[2] = i;
-        if(!previousInputs[i]){
-          TX_Message[0] = 'P';
-          __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
-        }
-      }
-      else if (previousInputs[i]) {
-        TX_Message[0] = 'R';
-      }
-    }
+    setRow(4);
+    delayMicroseconds(3);
+    instrumentKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
+      std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
 
-    xQueueSend( msgOutQ, TX_Message, portMAX_DELAY);
+    // for(int i = 0; i < 12; i++){
+    //   if(currentInputs[i]){
+    //     localCurrentStepSize = stepSizes[i];
+    //     TX_Message[2] = i;
+    //     if(!previousInputs[i]){
+    //       TX_Message[0] = 'P';
+    //       __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
+    //     }
+    //   }
+    //   else if (previousInputs[i]) {
+    //     TX_Message[0] = 'R';
+    //   }
+    // }
 
-    inputs.updateInputs(currentInputs);
+    xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
   }
 }
 

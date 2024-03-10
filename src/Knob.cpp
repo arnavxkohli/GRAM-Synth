@@ -1,11 +1,13 @@
 #include "Knob.h"
-// #include <STM32FreeRTOS.h>
 
 Knob::Knob(float upperBound, float lowerBound, float increment)
-    : rotationUpperBound(upperBound), rotationLowerBound(lowerBound), increments(increment) {}
+  : rotationUpperBound(upperBound), rotationLowerBound(lowerBound), increments(increment) {
+  this->rotation = lowerBound;
+  this->rotationISR = static_cast<uint32_t>(lowerBound);
+}
 
 uint32_t Knob::getRotationISR(){
-    return __atomic_load_n(&this->rotationISR, __ATOMIC_RELAXED);
+  return __atomic_load_n(&this->rotationISR, __ATOMIC_RELAXED);
 }
 
 float Knob::getRotation(){
@@ -43,7 +45,7 @@ void Knob::updateRotation(std::string BA_curr) {
     }
 
     this->rotation = localRotation;
-    this->rotationISR = static_cast<uint32_t>(std::round(localRotation));
+    this->rotationISR = static_cast<uint32_t>(localRotation);
     this->BA_prev = BA_curr;
 
     xSemaphoreGive(this->mutex);
