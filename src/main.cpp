@@ -15,12 +15,11 @@
 #include <stm32l4xx_hal_gpio.h>
 #include <stm32l432xx.h>
 #include <algorithm>
-#include "VolumeKnob.h"
 
 
 // Knob Knob1; // Adding knob 1, maybe needs a different class?
 // Knob Knob2; // Adding knob 2, maybe needs a different class?
-VolumeKnob volumeKnob; // Old definition of Knob 3
+Knob volumeKnob(8.0f, 0.0f, 1.0f); // Old definition of Knob 3
 
 RX_Message rxMessage;
 Inputs inputs;
@@ -94,7 +93,7 @@ void setRow(uint8_t rowidx){
 }
 
 void sampleISR(){
-  uint8_t localRotation = volumeKnob.getRotationISR();
+  uint32_t localRotation = volumeKnob.getRotationISR();
 	// Serial.print(nok);
 	// If there's at least a key being presses, do something
 	if (nok != 0) {
@@ -105,9 +104,9 @@ void sampleISR(){
 		// tone_idx[i] = the period index corresponding to that particular key
 		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
 		// instru = Selects the instrument, currrent is 0 - 3
-		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] + 
-					  waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] + 
-					  waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] + 
+		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
+					  waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
+					  waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
 					  waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
 					  waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
 					  waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
@@ -129,6 +128,7 @@ void sampleISR(){
 		decay[5] = 1;
 	}
 }
+
 
 void CAN_RX_ISR (void) {
   uint8_t RX_Message_ISR[8];
@@ -163,7 +163,7 @@ void scanKeysTask(void * pvParameters) {
       }
     }
 
-    volumeKnob.updateRotation(std::to_string(currentInputs[13]) + std::to_string(currentInputs[12]));
+    volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) + std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
 
     for(int i = 0; i < 12; i++){
       if(currentInputs[i]){
