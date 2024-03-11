@@ -11,17 +11,16 @@
 // #include "RX_Message.h"
 // #include "Inputs.h"
 // #include <ES_CAN.h>
+// #include "waveform.h"
+// #include <stm32l4xx_hal_gpio.h>
+// #include <stm32l432xx.h>
+// #include <algorithm>
 
-// #define SAMPLE_BUFFER_SIZE 1024
 
-// struct {
-//   uint8_t sampleBuffer0[SAMPLE_BUFFER_SIZE/2];
-//   uint8_t sampleBuffer1[SAMPLE_BUFFER_SIZE/2];
-//   volatile bool writeBuffer1 = false;
-//   SemaphoreHandle_t doubleBufferSemaphore;
-// } doubleBuffer;
+// Knob volumeKnob(12.0f, 0.0f, 1.0f);
+// Knob decayKnob(0.99999f, 0.9995f, -0.00005f);
+// Knob instrumentKnob(3.0f, 0.0f, 1.0f);
 
-// Knob Knob3;
 // RX_Message rxMessage;
 // Inputs inputs;
 // QueueHandle_t msgInQ;
@@ -32,54 +31,107 @@
 // //Display driver object
 // U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
 
+// // This is used so that gpio_state can be selected by integers
+// const GPIO_PinState gpio_state[2] = {GPIO_PIN_RESET, GPIO_PIN_SET};
+// // This stores the gpio pinouts corresponding to column idx C0 - 3
+// const uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};
+// //// Additional variables
+// std::string key;
+// int keynums;
+// int tone_idx[6] = {0}; // The indices (0 - 12) of the waveform periods that the are being selected to play in the audio
+// std::vector<std::vector<std::vector<uint32_t>>> waveform_luts; // the waveform lut stores the insturment waveforms.
+// int nok = 0; // No. of keys currently being presses simutaneously
+// int instru = 0; // Instrument idx, current there are 4 instruments
+// // Recodes whether a key is being presses. This filters out the pressed keys and enables the key to be detected in the order of their presses
+// bool press_list[12] = {false};
+
+// const uint32_t frequencies[12] = {262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494};
+// std::string keystrings[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+// uint32_t Ts[13] = {};
+
+// int t = 0; // Initialised timer
+// float decay[6] = {1};
+// float decay_factor = 0.99999;
+// uint32_t Vout;
+
 // //Function to set outputs using key matrix
 // void setOutMuxBit(const uint8_t bitIdx, const bool value) {
-//   digitalWrite(REN_PIN,LOW);
-//   digitalWrite(RA0_PIN, bitIdx & 0x01);
-//   digitalWrite(RA1_PIN, bitIdx & 0x02);
-//   digitalWrite(RA2_PIN, bitIdx & 0x04);
-//   digitalWrite(OUT_PIN,value);
-//   digitalWrite(REN_PIN,HIGH);
-//   delayMicroseconds(2);
-//   digitalWrite(REN_PIN,LOW);
+// 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
+
+// 	delayMicroseconds(2);
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, gpio_state[bitIdx & 0x01]);
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, gpio_state[bitIdx & 0x02]);
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, gpio_state[bitIdx & 0x04]);
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, gpio_state[value]); // OUT_PIN
+// 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_SET); // REN_PIN
+// 	delayMicroseconds(2);
+
+// 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
 // }
 
-// std::bitset<4> readCols(){
-//   std::bitset<4> result;
-
-//   result[0] = !digitalRead(C0_PIN);
-//   result[1] = !digitalRead(C1_PIN);
-//   result[2] = !digitalRead(C2_PIN);
-//   result[3] = !digitalRead(C3_PIN);
-
-//   return result;
-// }
-
-// void setRow(uint8_t rowIdx){
-//   digitalWrite(REN_PIN, LOW);
-//   std::bitset<3> rowBits = std::bitset<3>(rowIdx);
-
-//   digitalWrite(RA0_PIN, rowBits[0]);
-//   digitalWrite(RA1_PIN, rowBits[1]);
-//   digitalWrite(RA2_PIN, rowBits[2]);
-
-//   digitalWrite(REN_PIN, HIGH);
+// void setRow(uint8_t rowidx){
+// 	std::bitset<3> Ridx = std::bitset<3>(rowidx);
+// 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
+// 	delayMicroseconds(2);
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, gpio_state[Ridx[0]]); // RA0_PIN
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, gpio_state[Ridx[1]]); // RA1_PIN
+// 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, gpio_state[Ridx[2]]); // RA2_PIN
+// 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_SET); // REN_PIN
+// 	delayMicroseconds(2);
 // }
 
 // void sampleISR(){
-//   static uint32_t phaseAcc = 0;
-//   uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-//   uint8_t localRotation = Knob3.getRotationISR();
-
-//   phaseAcc += localCurrentStepSize;
-
-//   int32_t Vout = (phaseAcc >> 24) - 128;
-
-//   // localRotation used for volume before or after the 128?
-//   Vout = Vout >> (8 - localRotation);
-
-//   analogWrite(OUTR_PIN, Vout + 128);
+//   uint32_t localRotation = volumeKnob.getRotationISR();
+// 	// Serial.print(nok);
+// 	// If there's at least a key being presses, do something
+// 	if (nok != 0) {
+// 		// Decay for those keys that are being pressed
+// 		for (int i = 0; i < nok; i++) {
+// 			decay[i] *= decay_factor;
+// 		}
+// 		// tone_idx[i] = the period index corresponding to that particular key
+// 		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
+// 		// instru = Selects the instrument, currrent is 0 - 3
+// 		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
+// 					  waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
+// 					  waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
+// 					  waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
+// 					  waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
+// 					  waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+//     // Vout = Vout >> (12 - localRotation);
+//     // Sets audio resolution to 12
+//     analogWriteResolution(12);
+//     // The Vout is 12 bits already
+//     analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
+//     t ++; // increment timer
+//   }
+//   	// If no keys are being pressed the timer resets along with the decay factors
+// 	else {
+// 		t = 0;
+// 		decay[0] = 1;
+// 		decay[1] = 1;
+// 		decay[2] = 1;
+// 		decay[3] = 1;
+// 		decay[4] = 1;
+// 		decay[5] = 1;
+// 	}
 // }
+
+// // void sampleISR(){
+// //   static uint32_t phaseAcc = 0;
+// //   uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
+// //   uint32_t localRotation = volumeKnob.getRotationISR();
+
+// //   phaseAcc += localCurrentStepSize;
+
+// //   int32_t Vout = (phaseAcc >> 24) - 128;
+
+// //   // localRotation used for volume before or after the 128?
+// //   Vout = Vout >> (8 - localRotation);
+
+// //   analogWrite(OUTR_PIN, Vout + 128);
+// // }
+
 
 // void CAN_RX_ISR (void) {
 //   uint8_t RX_Message_ISR[8];
@@ -101,38 +153,77 @@
 //   while(1){
 //     vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
-//     uint32_t localCurrentStepSize = 0;
+//     // uint32_t localCurrentStepSize = 0;
 
-//     std::bitset<32> currentInputs = inputs.getCurrentInputs();
-//     std::bitset<32> previousInputs = inputs.getPreviousInputs();
+//     // std::bitset<32> currentInputs = inputs.getCurrentInputs();
+//     // std::bitset<32> previousInputs = inputs.getPreviousInputs();
 
-//     for(int row = 0; row < 4; row++){
-//       setRow(row);
-//       delayMicroseconds(3);
-//       for (int bit = 0; bit < 4; ++bit) {
-//           currentInputs[row * 4 + bit] = readCols()[bit];
-//       }
-//     }
+//     // for(int row = 0; row < 4; row++){
+//     //   setRow(row);
+//     //   delayMicroseconds(3);
+//     //   for (int bit = 0; bit < 4; ++bit) {
+//     //       currentInputs[row * 4 + bit] = readCols()[bit];
+//     //   }
+//     // }
 
-//     Knob3.updateRotation(std::to_string(currentInputs[13]) + std::to_string(currentInputs[12]));
+//     for (int i = 0; i < 12; i++) {
+// 			setRow(i / 4); // Floor division
+// 			delayMicroseconds(3);
+// 			// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
+// 			// sysState.inputs[i] = !HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]); // i % 4 iterate between 0 - 3 as i increases from 0 - 11
+// 			// xSemaphoreGive(sysState.mutex);
+// 			// 3 scnarios:
+// 			// 1: A key was not presses before and is now being presses
+// 			if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
+// 				press_list[i] = true; // Set the "is-pressed" entry for that key to true
+// 				tone_idx[nok] = i + 1;
+// 				TX_Message[0] = 'P';
+//         TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
+// 				key = key + keystrings[i];
+// 				nok ++; // Increase the no. of key being presses
+// 			}
+// 			// 2: A key was presses before and is now being released
+// 			else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
+// 				press_list[i] = false; // Set the "is-pressed" entry for that key to true
+// 				key = "";
+// 				TX_Message[0] = 'R';
+// 				nok --;
+// 				int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
+// 				int idx = std::distance(tone_idx, p);
+// 				tone_idx[idx] = 0;
+// 			}
+// 			// 3: A key was not presses and is nor currently being presses or a key was presses and is still being pressed
+// 			// Skip the key detetction for those keys
+// 		}
 
-//     for(int i = 0; i < 12; i++){
-//       if(currentInputs[i]){
-//         localCurrentStepSize = stepSizes[i];
-//         TX_Message[2] = i;
-//         if(!previousInputs[i]){
-//           TX_Message[0] = 'P';
-//           __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
-//         }
-//       }
-//       else if (previousInputs[i]) {
-//         TX_Message[0] = 'R';
-//       }
-//     }
+// 		setRow(3); // Select the knob row
+// 		delayMicroseconds(3);
 
-//     xQueueSend( msgOutQ, TX_Message, portMAX_DELAY);
+//     volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
+//       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
+//     decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
+//       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
-//     inputs.updateInputs(currentInputs);
+//     setRow(4);
+//     delayMicroseconds(3);
+//     instrumentKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
+//       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
+
+//     // for(int i = 0; i < 12; i++){
+//     //   if(currentInputs[i]){
+//     //     localCurrentStepSize = stepSizes[i];
+//     //     TX_Message[2] = i;
+//     //     if(!previousInputs[i]){
+//     //       TX_Message[0] = 'P';
+//     //       __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
+//     //     }
+//     //   }
+//     //   else if (previousInputs[i]) {
+//     //     TX_Message[0] = 'R';
+//     //   }
+//     // }
+
+//     xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 //   }
 // }
 
@@ -149,11 +240,10 @@
 //     u8g2.clearBuffer();         // clear the internal memory
 
 //     u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-//     u8g2.drawStr(2, 10, "GRAM-Synth");  // write something to the internal memory
+//     u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
 //     u8g2.setCursor(2, 20);
 
-//     u8g2.print("Volume: ");
-//     u8g2.print(Knob3.getRotation());
+//     u8g2.print(volumeKnob.getRotation());
 
 //     // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
 //     // u8g2.drawStr(2, 30, sysState.notePlayed);
@@ -192,47 +282,6 @@
 //   }
 // }
 
-// void doubleBufferISR(){
-//   static uint32_t readCtr = 0;
-  
-
-//   if (readCtr == SAMPLE_BUFFER_SIZE/2) {
-//     readCtr = 0;
-//     doubleBuffer.writeBuffer1 = !doubleBuffer.writeBuffer1;
-//     xSemaphoreGiveFromISR(doubleBuffer.doubleBufferSemaphore, NULL);
-//     }
-    
-//   if (doubleBuffer.writeBuffer1)
-//     analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer0[readCtr++]);
-//   else
-//     analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer1[readCtr++]);
-// }
-
-// void doubleBufferTask(void* pvParameters){
-
-//   static uint32_t phaseAcc = 0;
-
-//   while(1){
-
-//     xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
-//     for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
-
-//       uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-//       uint8_t localRotation = Knob3.getRotationISR();
-//       phaseAcc += localCurrentStepSize;
-
-//       int32_t Vout = (phaseAcc >> 24) - 128; //Calculate one sample
-
-//       Vout = Vout >> (8 - localRotation);
-
-//       if (doubleBuffer.writeBuffer1)
-//         doubleBuffer.sampleBuffer1[writeCtr] = Vout + 128;
-//       else
-//         doubleBuffer.sampleBuffer0[writeCtr] = Vout + 128;
-//     }
-//   }
-// }
-
 // void setup() {
 //   // put your setup code here, to run once:
 
@@ -260,6 +309,16 @@
 //   u8g2.begin();
 //   setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
 
+//   waveform_luts.push_back(sawtooth1());
+// 	waveform_luts.push_back(sinewave());
+// 	waveform_luts.push_back(piano1());
+// 	waveform_luts.push_back(sawtooth2());
+
+//   Ts[0] = 1;
+// 	for (int i = 1; i <= 12; i++) {
+// 		Ts[i] = 22000 / frequencies[i - 1];
+// 	}
+
 //   //Initialise UART
 //   Serial.begin(9600);
 
@@ -270,7 +329,7 @@
 //   HardwareTimer *sampleTimer = new HardwareTimer(Instance);
 
 //   sampleTimer->setOverflow(22000, HERTZ_FORMAT);
-//   sampleTimer->attachInterrupt(doubleBufferISR);
+//   sampleTimer->attachInterrupt(sampleISR);
 //   sampleTimer->resume();
 
 //   CAN_Init(true);
@@ -283,7 +342,6 @@
 //   TaskHandle_t displayUpdateHandle = NULL;
 //   TaskHandle_t CAN_RXHandle = NULL;
 //   TaskHandle_t CAN_TXHandle = NULL;
-//   TaskHandle_t doubleBufferHandle = NULL;
 
 //   xTaskCreate(
 //     displayUpdateTask, /* Function that implements the task */
@@ -321,19 +379,7 @@
 //     &CAN_TXHandle
 //   );
 
-  
-//   xTaskCreate(
-//   doubleBufferTask,	
-//   "doubleBuffer",	
-//   256,  
-//   NULL,	
-//   3,			
-//   &doubleBufferHandle );	
-
 //   CAN_TX_Semaphore = xSemaphoreCreateCounting(3,3);
-//   doubleBuffer.doubleBufferSemaphore = xSemaphoreCreateBinary();
-
-//   xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
 
 //   vTaskStartScheduler();
 // }
