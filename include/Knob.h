@@ -4,15 +4,21 @@
 // #include <string>
 // #include "SysState.h"
 // #include <STM32FreeRTOS.h>
+// #include <cmath>
 
 // class Knob : public SysState {
 // public:
-//     uint8_t getRotationISR();
-//     uint8_t getRotation();
+//     Knob(float upperBound, float lowerBound, float increment);
+//     uint32_t getRotationISR();
+//     float getRotation();
 //     void updateRotation(std::string BA_curr);
 
-// private:
-//     uint8_t rotation;
+// protected:
+//     uint32_t rotationISR;
+//     float rotation;
+//     float rotationUpperBound;
+//     float rotationLowerBound;
+//     float increments;
 //     std::string BA_prev;
 //     bool incrementLast;
 // };
