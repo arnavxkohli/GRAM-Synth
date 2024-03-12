@@ -9,7 +9,6 @@
 #include "Knob.h"
 #include "Globals.h"
 #include "RX_Message.h"
-#include "Inputs.h"
 #include <ES_CAN.h>
 #include "waveform.h"
 #include <stm32l4xx_hal_gpio.h>
@@ -22,7 +21,6 @@ Knob decayKnob(0.99999f, 0.9995f, -0.00005f);
 Knob instrumentKnob(3.0f, 0.0f, 1.0f);
 
 RX_Message rxMessage;
-Inputs inputs;
 QueueHandle_t msgInQ;
 QueueHandle_t msgOutQ;
 
@@ -81,7 +79,7 @@ void setRow(uint8_t rowidx){
 }
 
 void sampleISR() {
-  uint32_t localRotation = volumeKnob.getRotationISR();
+  uint32_t localRotation = static_cast<uint32_t>(volumeKnob.getRotationISR());
 	// Serial.print(nok);
 	// If there's at least a key being presses, do something
 	if (nok != 0) {
@@ -92,6 +90,7 @@ void sampleISR() {
 		// tone_idx[i] = the period index corresponding to that particular key
 		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
 		// instru = Selects the instrument, currrent is 0 - 3
+    uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
 		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
  					waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
 				 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
@@ -226,7 +225,7 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
 	u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
 	u8g2.setCursor(2, 20);
 
-	u8g2.print(volumeKnob.getRotation());
+	u8g2.print(instrumentKnob.getRotation());
 
 	// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
 	// u8g2.drawStr(2, 30, sysState.notePlayed);
