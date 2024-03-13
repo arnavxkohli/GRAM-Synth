@@ -15,6 +15,17 @@
 #include <stm32l432xx.h>
 #include <algorithm>
 
+#define SAMPLE_BUFFER_SIZE 1024
+
+DAC_HandleTypeDef hdac;
+
+struct {
+  uint32_t sampleBuffer0[SAMPLE_BUFFER_SIZE/2];
+  uint32_t sampleBuffer1[SAMPLE_BUFFER_SIZE/2];
+  volatile bool writeBuffer1 = false;
+  SemaphoreHandle_t doubleBufferSemaphore;
+} doubleBuffer;
+
 
 Knob volumeKnob(12.0f, 0.0f, 1.0f);
 Knob decayKnob(0.99999f, 0.9995f, -0.00005f);
@@ -78,43 +89,43 @@ void setRow(uint8_t rowidx){
 	delayMicroseconds(2);
 }
 
-void sampleISR() {
-  uint32_t localRotation = static_cast<uint32_t>(volumeKnob.getRotationISR());
-	// Serial.print(nok);
-	// If there's at least a key being presses, do something
-	if (nok != 0) {
-		// Decay for those keys that are being pressed
-		for (int i = 0; i < nok; i++) {
-			decay[i] *= decay_factor;
-		}
-		// tone_idx[i] = the period index corresponding to that particular key
-		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
-		// instru = Selects the instrument, currrent is 0 - 3
-    uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
-		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
- 					waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
-				 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
-					waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
-					waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
-					waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
-    // Vout = Vout >> (12 - localRotation);
-    // Sets audio resolution to 12
-    analogWriteResolution(12);
-    // The Vout is 12 bits already
-    analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
-    t ++; // increment timer
-  }
-  	// If no keys are being pressed the timer resets along with the decay factors
-	else {
-		t = 0;
-		decay[0] = 1;
-		decay[1] = 1;
-		decay[2] = 1;
-		decay[3] = 1;
-		decay[4] = 1;
-		decay[5] = 1;
-	}
-}
+// void sampleISR() {
+//   uint32_t localRotation = static_cast<uint32_t>(volumeKnob.getRotationISR());
+// 	// Serial.print(nok);
+// 	// If there's at least a key being presses, do something
+// 	if (nok != 0) {
+// 		// Decay for those keys that are being pressed
+// 		for (int i = 0; i < nok; i++) {
+// 			decay[i] *= decay_factor;
+// 		}
+// 		// tone_idx[i] = the period index corresponding to that particular key
+// 		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
+// 		// instru = Selects the instrument, currrent is 0 - 3
+//     uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
+// 		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
+//  					waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
+// 				 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
+// 					waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
+// 					waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
+// 					waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+//     // Vout = Vout >> (12 - localRotation);
+//     // Sets audio resolution to 12
+//     analogWriteResolution(12);
+//     // The Vout is 12 bits already
+//     analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
+//     t ++; // increment timer
+//   }
+//   	// If no keys are being pressed the timer resets along with the decay factors
+// 	else {
+// 		t = 0;
+// 		decay[0] = 1;
+// 		decay[1] = 1;
+// 		decay[2] = 1;
+// 		decay[3] = 1;
+// 		decay[4] = 1;
+// 		decay[5] = 1;
+// 	}
+// }
 
 // void sampleISR(){
 //   static uint32_t phaseAcc = 0;
@@ -224,8 +235,19 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
 	u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
 	u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
 	u8g2.setCursor(2, 20);
+	u8g2.print("Volume:");
+	u8g2.print(volumeKnob.getRotation());
+	u8g2.setCursor(2, 30);
+	u8g2.print("Vout:");
+	u8g2.print(Vout);
+	u8g2.setCursor(77, 20);
+	u8g2.print("nok:");
+	u8g2.print(nok);
+	u8g2.setCursor(77, 10);
+	u8g2.print("t:");
+	u8g2.print(t);
 
-	u8g2.print(instrumentKnob.getRotation());
+
 
 	// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
 	// u8g2.drawStr(2, 30, sysState.notePlayed);
@@ -295,6 +317,111 @@ void CAN_TX_Task (void * pvParameters) {
 	}
 }
 
+void doubleBufferISR(){
+  static uint32_t readCtr = 0;
+//   static uint32_t Data;
+
+
+  if (readCtr == SAMPLE_BUFFER_SIZE/2) {
+    readCtr = 0;
+    doubleBuffer.writeBuffer1 = !doubleBuffer.writeBuffer1;
+    xSemaphoreGiveFromISR(doubleBuffer.doubleBufferSemaphore, NULL);
+    }
+
+  if (doubleBuffer.writeBuffer1){
+    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R,doubleBuffer.sampleBuffer0[readCtr++]);
+	// analogWriteResolution(12);
+	// analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer0[readCtr++]);
+  } 
+  else{
+    HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R,doubleBuffer.sampleBuffer1[readCtr++]);
+	// analogWriteResolution(12);
+	// analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer1[readCtr++]);
+  }
+}
+
+void doubleBufferTask(void* pvParameters){
+
+  while(1){
+
+    xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
+    for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
+
+	  uint32_t localRotation = static_cast<uint32_t>(volumeKnob.getRotationISR());
+	  // Serial.print(nok);
+	  // If there's at least a key being presses, do something
+	  if (nok != 0) {
+	  	// Decay for those keys that are being pressed
+	  	for (int i = 0; i < nok; i++) {
+	  		decay[i] *= decay_factor;
+	  	}
+	  	// tone_idx[i] = the period index corresponding to that particular key
+	  	// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
+	  	// instru = Selects the instrument, currrent is 0 - 3
+        uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
+	  	Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
+ 	  				waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
+	  			 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
+	  				waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
+	  				waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
+	  				waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+
+        // analogWriteResolution(12);
+        // analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
+
+		Vout = Vout >> (12 - localRotation);
+        t++; // increment timer
+      }  
+  	  // If no keys are being pressed the timer resets along with the decay factors
+	  else {
+	  	t = 0;
+	  	decay[0] = 1;
+	  	decay[1] = 1;
+	  	decay[2] = 1;
+	  	decay[3] = 1;
+	  	decay[4] = 1;
+	  	decay[5] = 1;
+		Vout= 0;
+	  }
+
+	  if (doubleBuffer.writeBuffer1){
+		// doubleBuffer.sampleBuffer1[writeCtr] = Vout + 128;
+		doubleBuffer.sampleBuffer1[writeCtr] = Vout;
+	   }
+       else{
+		// doubleBuffer.sampleBuffer0[writeCtr] = Vout + 128;
+		doubleBuffer.sampleBuffer0[writeCtr] = Vout;
+	   }
+    }
+  }
+}
+
+void dacInitializationTask(void * pvParameters) {
+  // DAC_Init(hdac);
+  // DAC_Config(hdac);
+  // DAC_Start(hdac);
+  // Initialize DAC Channel
+  HAL_Init();
+
+  __HAL_RCC_DAC1_CLK_ENABLE();
+
+  hdac.Instance = DAC1;
+    
+  HAL_DAC_Init(&hdac);
+
+  //Config DAC channel
+  DAC_ChannelConfTypeDef sConfig;
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE; 
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+
+  HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1);
+
+  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+
+  Serial.println("DAC Setup Complete!");
+  vTaskDelete(NULL); // Delete this task as it's no longer needed
+}
+
 void setup() {
 	//Set pin directions
 	pinMode(RA0_PIN, OUTPUT);
@@ -340,7 +467,7 @@ void setup() {
 	HardwareTimer *sampleTimer = new HardwareTimer(Instance);
 
 	sampleTimer->setOverflow(22000, HERTZ_FORMAT);
-	sampleTimer->attachInterrupt(sampleISR);
+	sampleTimer->attachInterrupt(doubleBufferISR);
 	sampleTimer->resume();
 
 	CAN_Init(true);
@@ -353,8 +480,17 @@ void setup() {
 	TaskHandle_t displayUpdateHandle = NULL;
 	TaskHandle_t CAN_RXHandle = NULL;
 	TaskHandle_t CAN_TXHandle = NULL;
+    TaskHandle_t doubleBufferHandle = NULL;
 
 	#ifndef TEST_SCANKEYS
+		xTaskCreate(
+        	dacInitializationTask,
+        	"dacInit",
+        	128,
+        	NULL,
+        	2,  // Priority may need adjustment
+        	NULL
+		);
 		xTaskCreate(
 			displayUpdateTask, /* Function that implements the task */
 			"displayUpdate", /* Text name for the task */
@@ -389,6 +525,14 @@ void setup() {
 			NULL,
 			1,
 			&CAN_TXHandle
+		);
+		xTaskCreate(
+        	doubleBufferTask,	
+        	"doubleBuffer",	
+        	256,  
+        	NULL,	
+        	1,			
+        	&doubleBufferHandle 
 		);
 	#endif
 
@@ -434,6 +578,10 @@ void setup() {
 	#endif
 
 	CAN_TX_Semaphore = xSemaphoreCreateCounting(3,3);
+
+	doubleBuffer.doubleBufferSemaphore = xSemaphoreCreateBinary();
+    xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
+
 
 	vTaskStartScheduler();
 }
