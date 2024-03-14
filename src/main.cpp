@@ -43,7 +43,8 @@ int instru = 0; // Instrument idx, current there are 4 instruments
 // Recodes whether a key is being presses. This filters out the pressed keys and enables the key to be detected in the order of their presses
 bool press_list[12] = {false};
 
-const uint32_t frequencies[12] = {262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494};
+const uint32_t frequencies[12] = {262, 277, 294, 311, 330, 349, 370,
+392, 415, 440, 466, 494};
 std::string keystrings[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 uint32_t Ts[13] = {};
 
@@ -79,7 +80,8 @@ void setRow(uint8_t rowidx){
 }
 
 void sampleISR() {
-  uint32_t localRotation = static_cast<uint32_t>(volumeKnob.getRotationISR());
+  	uint32_t volume = static_cast<uint32_t>(volumeKnob.getRotationISR());
+	uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
 	// Serial.print(nok);
 	// If there's at least a key being presses, do something
 	if (nok != 0) {
@@ -90,20 +92,20 @@ void sampleISR() {
 		// tone_idx[i] = the period index corresponding to that particular key
 		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
 		// instru = Selects the instrument, currrent is 0 - 3
-    uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
 		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
- 					waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
-				 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
-					waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
-					waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
-					waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
-    // Vout = Vout >> (12 - localRotation);
-    // Sets audio resolution to 12
-    analogWriteResolution(12);
-    // The Vout is 12 bits already
-    analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
-    t ++; // increment timer
-  }
+				waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
+				waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
+				waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
+				waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
+				waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) /
+				std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+		// Vout = Vout >> (12 - volume);
+		// Sets audio resolution to 12
+		analogWriteResolution(12);
+		// The Vout is 12 bits already
+		analogWrite(OUTR_PIN, Vout >> (12 - volume));
+		t++; // increment timer
+  	}
   	// If no keys are being pressed the timer resets along with the decay factors
 	else {
 		t = 0;
@@ -119,14 +121,14 @@ void sampleISR() {
 // void sampleISR(){
 //   static uint32_t phaseAcc = 0;
 //   uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-//   uint32_t localRotation = volumeKnob.getRotationISR();
+//   uint32_t volume = volumeKnob.getRotationISR();
 
 //   phaseAcc += localCurrentStepSize;
 
 //   int32_t Vout = (phaseAcc >> 24) - 128;
 
-//   // localRotation used for volume before or after the 128?
-//   Vout = Vout >> (8 - localRotation);
+//   // volume used for volume before or after the 128?
+//   Vout = Vout >> (8 - volume);
 
 //   analogWrite(OUTR_PIN, Vout + 128);
 // }
@@ -158,37 +160,37 @@ void scanKeysFunction(uint8_t* TX_Message) {
 	// }
 
 	for (int i = 0; i < 12; i++) {
-			setRow(i / 4); // Floor division
-			delayMicroseconds(3);
-			// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-			// sysState.inputs[i] = !HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]); // i % 4 iterate between 0 - 3 as i increases from 0 - 11
-			// xSemaphoreGive(sysState.mutex);
-			// 3 scnarios:
-			// 1: A key was not presses before and is now being presses
-			if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
-				press_list[i] = true; // Set the "is-pressed" entry for that key to true
-				tone_idx[nok] = i + 1;
-				TX_Message[0] = 'P';
-		TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
-				key = key + keystrings[i];
-				nok ++; // Increase the no. of key being presses
-			}
-			// 2: A key was presses before and is now being released
-			else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
-				press_list[i] = false; // Set the "is-pressed" entry for that key to true
-				key = "";
-				TX_Message[0] = 'R';
-				nok --;
-				int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
-				int idx = std::distance(tone_idx, p);
-				tone_idx[idx] = 0;
-			}
-			// 3: A key was not presses and is nor currently being presses or a key was presses and is still being pressed
-			// Skip the key detetction for those keys
-		}
-
-		setRow(3); // Select the knob row
+		setRow(i / 4); // Floor division
 		delayMicroseconds(3);
+		// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
+		// sysState.inputs[i] = !HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]); // i % 4 iterate between 0 - 3 as i increases from 0 - 11
+		// xSemaphoreGive(sysState.mutex);
+		// 3 scnarios:
+		// 1: A key was not presses before and is now being presses
+		if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
+			press_list[i] = true; // Set the "is-pressed" entry for that key to true
+			tone_idx[nok] = i + 1;
+			TX_Message[0] = 'P';
+			TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
+			key = key + keystrings[i];
+			nok ++; // Increase the no. of key being presses
+		}
+		// 2: A key was presses before and is now being released
+		else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
+			press_list[i] = false; // Set the "is-pressed" entry for that key to true
+			key = "";
+			TX_Message[0] = 'R';
+			nok --;
+			int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
+			int idx = std::distance(tone_idx, p);
+			tone_idx[idx] = 0;
+		}
+		// 3: A key was not presses and is nor currently being presses or a key was presses and is still being pressed
+		// Skip the key detetction for those keys
+	}
+
+	setRow(3); // Select the knob row
+	delayMicroseconds(3);
 
 	volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
@@ -243,9 +245,9 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
 }
 
 void CAN_RX_Function(uint8_t* local_RX) {
-		xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
-		rxMessage.receiveMessage(local_RX);
-		__atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
+	xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
+	rxMessage.receiveMessage(local_RX);
+	__atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
 }
 
 void CAN_TX_Function(uint8_t* msgOut) {
