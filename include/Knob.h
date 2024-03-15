@@ -9,7 +9,7 @@
 class Knob : public SysState {
 public:
     Knob(float upperBound, float lowerBound, float increment);
-    float getRotationISR();
+    uint32_t getRotationISR();
     float getRotation();
     void updateRotation(std::string BA_curr);
 

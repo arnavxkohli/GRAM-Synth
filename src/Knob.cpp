@@ -3,12 +3,11 @@
 Knob::Knob(float upperBound, float lowerBound, float increment)
   : rotationUpperBound(upperBound), rotationLowerBound(lowerBound), increments(increment) {
   this->rotation = lowerBound;
-  this->rotationISR = static_cast<uint32_t>(lowerBound * (1 << 10));
+  this->rotationISR = static_cast<uint32_t>(lowerBound);
 }
 
-float Knob::getRotationISR() {
-  uint32_t unShiftedRotation = __atomic_load_n(&this->rotationISR, __ATOMIC_RELAXED);
-  return static_cast<float>(unShiftedRotation) / (1 << 10);
+uint32_t Knob::getRotationISR() {
+  return __atomic_load_n(&this->rotationISR, __ATOMIC_RELAXED);
 }
 
 float Knob::getRotation() {
@@ -46,7 +45,7 @@ void Knob::updateRotation(std::string BA_curr) {
   }
 
   this->rotation = localRotation;
-  this->rotationISR = static_cast<uint32_t>(localRotation * (1 << 10)); // Scale factor: 2^10
+  this->rotationISR = static_cast<uint32_t>(localRotation); // Scale factor: 2^10
   this->BA_prev = BA_curr;
 
   xSemaphoreGive(this->mutex);
