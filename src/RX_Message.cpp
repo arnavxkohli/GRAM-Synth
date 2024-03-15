@@ -3,35 +3,46 @@
 #include <cstring>
 #include "globals.h"
 
-void RX_Message::receiveMessage(uint8_t message[8]){
+void RX_Message::receiveMessage(const std::array<uint8_t, 8>& message) {
     uint32_t localCurrentStepSize = 0;
 
-    if(message[0] == 'P'){
+    if (message[0] == 'P') {
         localCurrentStepSize = (stepSizes[message[2]] << message[1]) >> 4;
     }
 
+    // Lock the mutex before accessing shared data
     xSemaphoreTake(this->mutex, portMAX_DELAY);
+
+    // Update currentStepSize and rxMessage
     this->currentStepSize = localCurrentStepSize;
-    memcpy(this->RX_Message, message, 8);
+    this->rxMessage = message;
+
+    // Release the mutex
     xSemaphoreGive(this->mutex);
 }
 
-uint32_t RX_Message::getStepSize(){
-    uint32_t stepSize = 0;
-
+uint32_t RX_Message::getStepSize() {
+    // Lock the mutex before accessing shared data
     xSemaphoreTake(this->mutex, portMAX_DELAY);
-    stepSize = this->currentStepSize;
+
+    // Get currentStepSize
+    uint32_t stepSize = this->currentStepSize;
+
+    // Release the mutex
     xSemaphoreGive(this->mutex);
 
     return stepSize;
 }
 
-uint8_t* RX_Message::getRX_Message(){
-    uint8_t* rxMessage;
-
+const std::array<uint8_t, 8>& RX_Message::getRX_Message() {
+    // Lock the mutex before accessing shared data
     xSemaphoreTake(this->mutex, portMAX_DELAY);
-    rxMessage = this->RX_Message;
+
+    // Return rxMessage
+    const std::array<uint8_t, 8>& message = this->rxMessage;
+
+    // Release the mutex
     xSemaphoreGive(this->mutex);
 
-    return rxMessage;
+    return message;
 }

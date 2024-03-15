@@ -2,18 +2,19 @@
 #define RX_MESSAGE_HPP
 
 #include "SysState.h"
-#include <stdint.h>
+#include <array>
+#include <cstdint>
 #include <STM32FreeRTOS.h>
 
-class RX_Message : public SysState{
-    public:
-        void receiveMessage(uint8_t message[8]);
-        uint32_t getStepSize();
-        uint8_t* getRX_Message();
+class RX_Message : public SysState {
+public:
+    void receiveMessage(const std::array<uint8_t, 8>& message);
+    uint32_t getStepSize();
+    const std::array<uint8_t, 8>& getRX_Message();
 
-    private:
-        uint8_t RX_Message[8];
-        uint32_t currentStepSize;
+private:
+    std::array<uint8_t, 8> rxMessage;
+    uint32_t currentStepSize;
 };
 
-#endif
+#endif // RX_MESSAGE_HPP

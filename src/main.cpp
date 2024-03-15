@@ -20,7 +20,7 @@ Knob volumeKnob(12.0f, 0.0f, 1.0f);
 Knob decayKnob(0.99999f, 0.9995f, -0.00005f);
 Knob instrumentKnob(3.0f, 0.0f, 1.0f);
 
-RX_Message rxMessage;
+RX_Message rXMessage;
 QueueHandle_t msgInQ;
 QueueHandle_t msgOutQ;
 
@@ -43,10 +43,16 @@ int instru = 0; // Instrument idx, current there are 4 instruments
 // Recodes whether a key is being presses. This filters out the pressed keys and enables the key to be detected in the order of their presses
 bool press_list[12] = {false};
 
+
+
+
 const uint32_t frequencies[12] = {262, 277, 294, 311, 330, 349, 370,
 392, 415, 440, 466, 494};
 std::string keystrings[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 uint32_t Ts[13] = {};
+
+
+
 
 int t = 0; // Initialised timer
 float decay[6] = {1};
@@ -80,8 +86,8 @@ void setRow(uint8_t rowidx){
 }
 
 void sampleISR() {
-  	uint32_t volume = static_cast<uint32_t>(volumeKnob.getRotationISR());
-	uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
+  	uint32_t volume = volumeKnob.getRotationISR();
+	uint32_t instru = instrumentKnob.getRotationISR();
 	// Serial.print(nok);
 	// If there's at least a key being presses, do something
 	if (nok != 0) {
@@ -118,21 +124,6 @@ void sampleISR() {
 	}
 }
 
-// void sampleISR(){
-//   static uint32_t phaseAcc = 0;
-//   uint32_t localCurrentStepSize = __atomic_load_n(&currentStepSize, __ATOMIC_RELAXED);
-//   uint32_t volume = volumeKnob.getRotationISR();
-
-//   phaseAcc += localCurrentStepSize;
-
-//   int32_t Vout = (phaseAcc >> 24) - 128;
-
-//   // volume used for volume before or after the 128?
-//   Vout = Vout >> (8 - volume);
-
-//   analogWrite(OUTR_PIN, Vout + 128);
-// }
-
 
 void CAN_RX_ISR (void) {
 	uint8_t RX_Message_ISR[8];
@@ -145,7 +136,9 @@ void CAN_TX_ISR (void) {
 	xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL);
 }
 
-void scanKeysFunction(uint8_t* TX_Message) {
+void scanKeysFunction() {
+	std::array<uint8_t, 8> TX_Message;
+	TX_Message[1] = 4;
 	// uint32_t localCurrentStepSize = 0;
 
 	// std::bitset<32> currentInputs = inputs.getCurrentInputs();
@@ -162,9 +155,6 @@ void scanKeysFunction(uint8_t* TX_Message) {
 	for (int i = 0; i < 12; i++) {
 		setRow(i / 4); // Floor division
 		delayMicroseconds(3);
-		// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-		// sysState.inputs[i] = !HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]); // i % 4 iterate between 0 - 3 as i increases from 0 - 11
-		// xSemaphoreGive(sysState.mutex);
 		// 3 scnarios:
 		// 1: A key was not presses before and is now being presses
 		if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
@@ -216,7 +206,7 @@ void scanKeysFunction(uint8_t* TX_Message) {
 	//   }
 	// }
 
-	xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+	//xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 }
 
 void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
@@ -232,11 +222,11 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
 	// xSemaphoreTake(sysState.mutex, portMAX_DELAY);
 	// u8g2.drawStr(2, 30, sysState.notePlayed);
 	// xSemaphoreGive(sysState.mutex);
-	memcpy(localRX, rxMessage.getRX_Message(), 8);
-	u8g2.setCursor(66,30);
-	u8g2.print((char) localRX[0]);
-	u8g2.print(localRX[1]);
-	u8g2.print(localRX[2]);
+	// memcpy(localRX, rXMessage.getRX_Message(), 8);
+	// u8g2.setCursor(66,30);
+	// u8g2.print((char) localRX[0]);
+	// u8g2.print(localRX[1]);
+	// u8g2.print(localRX[2]);
 
 	u8g2.sendBuffer();          // transfer internal memory to the display
 
@@ -244,11 +234,11 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
 	digitalToggle(LED_BUILTIN);
 }
 
-void CAN_RX_Function(uint8_t* local_RX) {
-	xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
-	rxMessage.receiveMessage(local_RX);
-	__atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
-}
+// void CAN_RX_Function(uint8_t* local_RX) {
+// 	xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
+// 	rXMessage.receiveMessage(local_RX);
+// 	__atomic_store_n(&currentStepSize, rXMessage.getStepSize(), __ATOMIC_RELAXED);
+// }
 
 void CAN_TX_Function(uint8_t* msgOut) {
 	xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
@@ -260,12 +250,10 @@ void CAN_TX_Function(uint8_t* msgOut) {
 void scanKeysTask(void * pvParameters) {
 	const TickType_t xFrequency = 20/portTICK_PERIOD_MS;
 	TickType_t xLastWakeTime = xTaskGetTickCount();
-	uint8_t TX_Message[8] = {0};
-	TX_Message[1] = 4; // Octave to be changed later - try auto assigning this.
 
 	while(1) {
 		vTaskDelayUntil( &xLastWakeTime, xFrequency );
-		scanKeysFunction(TX_Message);
+		scanKeysFunction();
 	}
 }
 
@@ -281,13 +269,13 @@ void displayUpdateTask(void * pvParameters){
 	}
 }
 
-void CAN_RX_Task(void* pvParameters){
-	uint8_t local_RX[8];
+// void CAN_RX_Task(void* pvParameters){
+// 	uint8_t local_RX[8];
 
-	while(1) {
-		CAN_RX_Function(local_RX);
-	}
-}
+// 	while(1) {
+// 		CAN_RX_Function(local_RX);
+// 	}
+// }
 
 void CAN_TX_Task (void * pvParameters) {
 	uint8_t msgOut[8];
@@ -345,11 +333,11 @@ void setup() {
 	sampleTimer->attachInterrupt(sampleISR);
 	sampleTimer->resume();
 
-	CAN_Init(true);
-	setCANFilter(0x123,0x7ff);
-	CAN_RegisterRX_ISR(CAN_RX_ISR);
-	CAN_RegisterTX_ISR(CAN_TX_ISR);
-	CAN_Start();
+	// CAN_Init(true);
+	// setCANFilter(0x123,0x7ff);
+	// CAN_RegisterRX_ISR(CAN_RX_ISR);
+	// CAN_RegisterTX_ISR(CAN_TX_ISR);
+	// CAN_Start();
 
 	TaskHandle_t scanKeysHandle = NULL;
 	TaskHandle_t displayUpdateHandle = NULL;
@@ -375,23 +363,23 @@ void setup() {
 			&scanKeysHandle /* Pointer to store the task handle */
 		);
 
-		xTaskCreate(
-			CAN_RX_Task,
-			"CAN_RX_Task",
-			64,
-			NULL,
-			1,
-			&CAN_RXHandle
-		);
+		// xTaskCreate(
+		// 	CAN_RX_Task,
+		// 	"CAN_RX_Task",
+		// 	64,
+		// 	NULL,
+		// 	1,
+		// 	&CAN_RXHandle
+		// );
 
-		xTaskCreate(
-			CAN_TX_Task,
-			"CAN_TX_Task",
-			64,
-			NULL,
-			1,
-			&CAN_TXHandle
-		);
+		// xTaskCreate(
+		// 	CAN_TX_Task,
+		// 	"CAN_TX_Task",
+		// 	64,
+		// 	NULL,
+		// 	1,
+		// 	&CAN_TXHandle
+		// );
 	#endif
 
 	#ifdef TEST_SCANKEYS
