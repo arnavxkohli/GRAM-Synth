@@ -2,7 +2,7 @@
 
 keyPress::keyPress() :
     pressList({false}),
-    keystrings({"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}), 
+    keystrings({"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}),
     TX_Message({0}) {
     this->TX_Message[1] = 4;
 }
@@ -19,6 +19,10 @@ int keyPress::getNumKeys() {
     int numKeys = this->numberOfKeys;
     xSemaphoreGive(this->mutex);
     return numKeys;
+}
+
+int keyPress::getNumKeysISR(){
+    return __atomic_load_n(&this->numberOfKeys, __ATOMIC_RELAXED);
 }
 
 std::string keyPress::getKeyString() {

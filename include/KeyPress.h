@@ -12,6 +12,7 @@ public:
     bool getPressIdx(int index);
     void toggleKeyPress(int index);
     int getNumKeys();
+    int getNumKeysISR();
     std::string getKeyString();
     const std::array<uint8_t, 8>& getTxMessage();
 
