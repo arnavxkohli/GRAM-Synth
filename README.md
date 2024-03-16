@@ -1,11 +1,21 @@
 # GRAM's Music Synthesizer
 ## Key press detection
   ### Basic key scanning
-  First, a for loop of 12 iterations is used to loop through the 12 keys.
+  First, the `digitalRead(GPIOA, col)` functions are replaced by `!HAL_GPIO_ReadPin()` to increase execution speed. The input to `col` is a array of length 4 defined as `uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};`.
+  Then, a for loop of 12 iterations is used to loop through the 12 keys.
   ```
   for (int i = 0; i < 12; i++) {
     ...
   }
+  ```
+  Then, use floor division `/` to ensure that only 3 rows are being addressed for 12 iterations: `setRow(i / 4)`. The remainder operation `%` is used to loop through each column in each row: `!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4])`. This enables the read key function to be executed in a single loop. For each key being detected:
+  ```
+  press_list[i] = true;
+  keynum = i + 1 + octave * 12;
+  tone_idx[nok] = keynum;
+  key = key + keystrings[i + octave * 12];
+  nok ++;
+  TX_Message[0] = 'P';
   ```
   ### Decoupled key scanning
   The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the
