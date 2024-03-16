@@ -55,11 +55,11 @@ In the beat generating section, the entries stored in waveform_lut must only rep
 The table below summarised all the tasks with their priority and timing constrains:
 | Task name | initiation int. | latent execution time | priority|
 | --- | --- | --- | --- |
-| display | 100ms | 16.519ms | 4 |
-| Key scanning | 20ms | 0.299ms | 1 |
+| display | 100ms | 16.519ms | 1 |
+| Key scanning | 20ms | 0.299ms | 4 |
 | ISR sampling | 0.045ms | 0.003ms | interrupt |
-| Data transmission | 60ms | 0.36ms | 3 |
-| Data decoding | 25.2ms | 0.468ms | 2 |
+| Data transmission | 60ms | 0.36ms | 2 |
+| Data decoding | 25.2ms | 0.468ms | 3 |
 
 The system's critical instant, $t_c$ must be less than the longest initiation interval, $\tau_n$ amoung the tasks. In this case, $\tau_n = 100ms$. The critical instant is calculated using:
 $$t_c = \sum_{k=1}^n \frac{\tau_n}{\tau_k}T_k$$
