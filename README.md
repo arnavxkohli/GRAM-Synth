@@ -121,6 +121,14 @@ In the beat generating section, the entries stored in waveform_lut must only rep
 
 ## Communication
 ## Threads timing analysis
+To imeplement timing analysis of each task, we must let each task to run only once. To do this, we defined a `XXXFunction` which is called repeatedly in a `XXXTask`:
+```
+void XXXTask(void * parameters) {
+  while(1) {
+    XXXFunction();
+  }
+```
+This enables both indefinite and single execution of any task.
 The table below summarised all the tasks with their priority and timing constrains:
 | Task name | initiation int. | latent execution time | priority|
 | --- | --- | --- | --- |
