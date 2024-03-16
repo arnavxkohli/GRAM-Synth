@@ -30,12 +30,16 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
   ### Tone decay
   Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: $Vout = (decay factor) ^ t$. The decay factor is distinguishable for every pressed key and as soon as a key is released, `decay_factor` is reset to 1;
   ### Issues with using decay with lut
-  Because the keys are being detected in the order of their position, we will encounter a scenario where:
+  Because the keys are being detected in the order of their position, we will encounter 2 possible error scenarios where:
   1. If there are existing keys that have been presses for a while. Their decay factor would have been quite small.
   2. Then if a new key enters the tone_idx array, it will be positioned at the end of the array. The decay factor of thie new tone however, is still quite large while the decay factor of the previous 2 keys are getting even smaller.
   3. Then if the first 2 keys are being released, the array would reallocate the 3rd key to the start of this array.
   4. This resulted in a sudden change of volume of key 'E'.
   ![](1.png)
+  1. If there are some higher pitched keys being pressed previously, their decay factor would be small.
+  2. Then is a lower pitched key is presses, it will get allocated to the start of the array.
+  3. The new key will immediately have a quite volume, even though it is not supposed to happen.
+  ![](2.png)
   To solve this issue, we need to make sure that the keys always remain at their assigned location in the `tone_idx` array.
   
   ### Beat function
