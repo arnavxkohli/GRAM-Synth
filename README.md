@@ -44,6 +44,8 @@ The table below summarised all the tasks with their priority and timing constrai
 | ISR sampling | 0.045ms | 0.003ms | interrupt |
 | Data transmission | 60ms | 0.36ms | 3 |
 | Data decoding | 25.2ms | 0.468ms | 2 |
+The system's critical instant, $t_c$ must be less than the longest initiation interval, $\tau_n$ amoung the tasks. In this case, $\tau_n = 100ms$. The critical instant is calculated using:
+$t_c = \sum_{k=1}^n \frac{\tau_n}{\tau_k}T_k$
 ## Methods used to guarantee safe access and synchronization:
   ### Semaphore-Based Mutex for Critical Sections:
   In Inputs.cpp, Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Inputs.cpp, Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (currentInputs, previousInputs, rotation, rotationISR, currentStepSize, RX_Message) during updates or reads.
