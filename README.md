@@ -37,13 +37,13 @@ In the beat generating section, the entries stored in waveform_lut must only rep
 ## Communication
 ## Threads timing analysis
 The table below summarised all the tasks with their priority and timing constrains:
-| Task name | initiation int. | execution time | priority|
+| Task name | initiation int. | latent execution time | priority|
 | --- | --- | --- | --- |
-| display | | | |
-| Key scanning | | | |
-| ISR sampling | | | |
-| Data transmission | | | |
-| Data decoding | | | |
+| display | 100ms | 16.519ms | 4 |
+| Key scanning | 20ms | 0.299ms | 1 |
+| ISR sampling | 0.045ms | 0.003ms | interrupt |
+| Data transmission | 60ms | 0.36ms | 3 |
+| Data decoding | 25.2ms | 0.468ms | 2 |
 ## Methods used to guarantee safe access and synchronization:
   ### Semaphore-Based Mutex for Critical Sections:
   In Inputs.cpp, Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Inputs.cpp, Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (currentInputs, previousInputs, rotation, rotationISR, currentStepSize, RX_Message) during updates or reads.
