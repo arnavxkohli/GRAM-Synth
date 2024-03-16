@@ -49,6 +49,9 @@ To do this, a `std::vector<std::vector<std::vector<uint16_t>>> waveform_lut` is 
 Inside the double buffer writing task, Vout is calculated by reading the entries in waveform_lut by indexing with instru, tone_idx, t and Ts. The summed amplitude from multiple frequencies will be divided by the number of keys (nok) to ensure it’s between 0 and 4095. The first dimension of the lut contains all the stored instrument samples playable. The second dimension contains all the sound samples of all the freqeuncies of that instrument. And the last dimension contains the amplitude samples of a single period waveform of a particular frequency. Since the vector size is finite and it is required to loop through every samples of a period, we cannot let the timer t to increase indefinitely. Instead, we used the remainder `t % Ts[tone_idx[i]]` to access an entire preiod repeatedly. `uint16_t Ts[37]` stores the 36 periods plus a idle period and the `tone_idx` is used to access which periods are present.
 
 ## Audio
+  ### Instrument LUT in SampleISR()
+  The cumulative `stepSize` in SampleISR function is replaced with a LUT read operation where `instru`, `tone_idx` and `Ts` are used to read a single amplitude of a single frequency from the LUT. This operation is repeated for as many number of keys (determined by the `nok` varaible). The resultant `Vout` is the sum of all amplitude at time `t`.
+  
   ### Tone decay
   Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: $Vout = (decay factor) ^ t$. The decay factor is distinguishable for every pressed key and as soon as a key is released, `decay_factor` is reset to 1;
   ### Decay factor variable in SampleISR()
@@ -74,6 +77,8 @@ The difference between the waveform sound and a beat sound is that a waveform is
 First, for `instru` option of 0-2, we assign them to be waveform generating and the remaining `instru = 3 or 4` to be the beats. If `instru` is greater than 2, we enter the beat generating section.
 In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
   Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would results in additional variables being created to detect whether a receieved instruction demands a beat to be generated since this would addes workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
+
+  ### Double buffer
 
 ## Communication
 ## Threads timing analysis
