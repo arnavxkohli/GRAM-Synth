@@ -19,6 +19,27 @@
   The task is implemented as a FreeRTOS task using xTaskCreate. It has a period of 100ms as specified by xFrequency. It retrieves the task handle to manage task operations. The displayUpdateFunction is called within this task to update the OLED display content. The OLED display update involves clearing the buffer, drawing text and graphics, and sending the buffer to the display.
 ## User interface
 The main control interface of the system is via the 4 knobs on the keyboard. Each knob is responsible for change the: volume, decay rate, instrument and octave of the sound played.
+The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code bits of the knob row of the key matrix. `Knob::Knob()` set the upper, lower bound of a knob variable and the increment size whnever the knob is rotated. `Knob.updateRotation()` detects the changes in the binary bit pairs:
+| BA prev | BA next | operation |
+| --- | --- | --- |
+| 00 | 01 | + increment |
+| 11 | 10 | + increment |
+| 01 | 00 | - increment |
+| 10 | 11 | - increment |
+
+To improve detection resolution, the indeterminant states of the knob rotation is taken into account:
+| BA prev | BA next | last operation is + increment? | operation |
+| --- | --- | --- | --- |
+| 11 | 00 | Yes | + increment |
+| 11 | 00 | No | - increment |
+| 10 | 01 | Yes | + increment|
+| 10 | 01 | No | - increment |
+| 01 | 10 | Yes | + increment |
+| 01 | 10 | No | - increment |
+| 00 | 11 | Yes | + increment |
+| 00 | 11 | No | - increment |
+
+`Knob::getRotationISR()` performs atomic load and store operation and `Knob::getRotation()` returns the curent rotation value of a `Knob` class variable.
 ## Instrument waveform generation
   ### Instrument look-up-table (LUT)
   Commercial synthesizers stores sound waveforms in their internal memory. This is because a lot of the real instrument sounds cannot be easily generated using mathematical functions. A typical approach is to record the sound of instruments playing, and then extract a section of it then play it repeatedly.
@@ -49,8 +70,8 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
   
   ### Beat function
   The synthesizer also has the function of using the keyboard as a beat generator.
-The difference between the waveform sound and a beat sound is that, an waveform is periodic whereas a beat is typically non-periodic and has a varying frequency over time. To solve this issue, a switch is used in the Vout calculation.
-First, the first few instruments (0-2) were assigned to be waveform generating and the remaining (3-4) to be the beats. If instru variable is greater than 2, we enter the beat generating section.
+The difference between the waveform sound and a beat sound is that a waveform is periodic whereas a beat is typically non-periodic and has a varying frequency over time. To solve this issue, a switch is used in the Vout calculation.
+First, for `instru` option of 0-2, we assign them to be waveform generating and the remaining `instru = 3 or 4` to be the beats. If `instru` is greater than 2, we enter the beat generating section.
 In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
   Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would results in additional variables being created to detect whether a receieved instruction demands a beat to be generated since this would addes workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
 
