@@ -7,9 +7,10 @@
   This would create the issue of keys being desynchronised (see section 2). To solve this issue, when a key is released, it must remain at the same position as before instead of moving to a lower position. In other words, the keys must be detected in the order of their presses, not in the order of their position.
   
   First, a Boolean array of length 12 is used in place of the input variable. For every key scanning execution, the key that’s being pressed is registered true in corresponding entry in the array and this key will get skipped in the next scanning iteration. There are 3 cases that can happen:
-  1.	A key was previously not being pressed and is now being pressed. In this case, the entry in the array corresponding to that key is set true and not will increase by 1.
-  2.	A key was previously being presses and is now released. In this case we used a std::find function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1.
-  3.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
+  1.	A key was previously not being pressed and is now being pressed. In this case, the entry in the array corresponding to that key is set true and `nok` will increase by 1.
+  
+  3.	A key was previously being presses and is now released. In this case we used a std::find function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1.
+  4.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
 
 ## Display
   ### Description
@@ -39,8 +40,8 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
   1. If there are some higher pitched keys being pressed previously, their decay factor would be small.
   2. Then if a lower pitched key is pressed, it will get allocated to the start of the array.
   3. The new key will immediately have a quite volume, even though it is not supposed to happen.
-  ![](2.png)
-  To solve this issue, we need to make sure that the keys always remain at their assigned location in the `tone_idx` array.
+  ![](2.png)\\
+  To solve this issue, we need to make sure that the keys always remain at in the same location in the `tone_idx` array throughout.
   
   ### Beat function
   The synthesizer also has the function of using the keyboard as a beat generator.
