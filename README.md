@@ -49,7 +49,9 @@
   }
   ```
   5.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
-![](3.png)
+
+  The two figure below shows a comparison of key number storing operations under traditional method and decoupled key scanning.
+  ![](3.png)
 
 ## Display
   ### Description
