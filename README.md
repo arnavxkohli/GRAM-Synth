@@ -10,23 +10,45 @@
   ```
   Then, use floor division `/` to ensure that only 3 rows are being addressed for 12 iterations: `setRow(i / 4)`. The remainder operation `%` is used to loop through each column in each row: `!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4])`. This enables the read key function to be executed in a single loop. For each key being detected:
   ```
-  press_list[i] = true;
   keynum = i + 1 + octave * 12;
   tone_idx[nok] = keynum;
   key = key + keystrings[i + octave * 12];
   nok ++;
   TX_Message[0] = 'P';
   ```
+  The array `tone_idx` contains the key number `keynum` of the pressed key. `keynum` is increased by 12 times `octave` if the octave of the keyboard changes during operation. The string `key` reads and appends the new key from string array `keystrings`, which contains the symbols of all possible keys from C1 to B3. The `nok` variables stored the totoal keys being presses simutaneously and the transmission message `TX_message` will be set to 'P'.
   ### Decoupled key scanning
-  The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the
-  decay function, the maximum amplitude of sound wave of each key is decreasing over time and the decay is independent to each key.
+  The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the decay function, the maximum amplitude of sound wave of each key is decreasing over time and the decay is independent to each key.
   
   This would create the issue of keys being desynchronised (see section 2). To solve this issue, when a key is released, it must remain at the same position as before instead of moving to a lower position. In other words, the keys must be detected in the order of their presses, not in the order of their position.
   
-  First, a Boolean array of length 12 is used in place of the input variable. For every key scanning execution, the key that’s being pressed is registered true in corresponding entry in the array and this key will get skipped in the next scanning iteration. There are 3 cases that can happen:
+  First, a Boolean array of length 12 `bool press_list[12]` is used in place of the input variable. For every key scanning execution, the key that’s being pressed is registered true in corresponding entry in the array and this key will get skipped in the next scanning iteration. There are 3 cases that can happen:
   1.	A key was previously not being pressed and is now being pressed. In this case, the entry in the array corresponding to that key is set true and `nok` will increase by 1.
-  2.	A key was previously being presses and is now released. In this case we used `std::find()` function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1.
-  4.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
+  ```
+  for (int i = 0; i < 12; i++) {
+    if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
+      press_list[i] = true;
+      ...
+    }
+    ...
+  }
+  ```
+  3.	A key was previously being presses and is now released. In this case we used `std::find()` function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1. `std::distance` calculates the index position of the keynumber inside the `tone_idx` array.
+  ```
+  for (int i = 0; i < 12; i++) {
+    ...
+    if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
+      press_list[i] = false;
+      int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1 + octave * 12);
+      int idx = std::distance(tone_idx, p);
+      tone_idx[idx] = 0;
+      TX_Message[0] = 'R';
+      ...
+    }
+    ...
+  }
+  ```
+  5.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
 ![](3.png)
 
 ## Display
