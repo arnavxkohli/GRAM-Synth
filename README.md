@@ -12,6 +12,10 @@
   3.	A key was not pressed before and remains undressed or was pressed and remains being presses. No nothing in this case.
 
 ## Display
+  ### Description
+  It is a thread with priority 1 as it has the longest initiation interval of 100ms. This function is responsible for calling repeatedly displayUpdateFunction for displaying on the OLED display screen: which note is selected, if a key is pressed or released and the knobs rotation (volume, decay, in which octave it is, instrument selection). 
+  ### Code analysis
+  The task is implemented as a FreeRTOS task using xTaskCreate. It has a period of 100ms as specified by xFrequency. It retrieves the task handle to manage task operations. The displayUpdateFunction is called within this task to update the OLED display content. The OLED display update involves clearing the buffer, drawing text and graphics, and sending the buffer to the display.
 ## User interface
 ## Instrument waveform generation
   ### Instrument look-up-table (LUT)
@@ -31,3 +35,15 @@ First, the first few instruments (0-2) were assigned to be waveform generating a
 In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
 
 ## Communication
+## Methods used to guarantee safe access and synchronization:
+  ### Semaphore-Based Mutex for Critical Sections:
+  In Inputs.cpp, Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Inputs.cpp, Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (currentInputs, previousInputs, rotation, rotationISR, currentStepSize, RX_Message) during updates or reads.
+  Mutex Initialization:
+Each class (Inputs, Knob, RX_Message) initializes its mutex in its constructor (SysState.cpp) using xSemaphoreCreateMutex().
+  Semaphore Timeouts:
+Semaphores are acquired with a timeout (portMAX_DELAY) to prevent deadlock situations where a task may indefinitely block waiting for a resource that never becomes available.
+  ### Atomic Load and Store Operations:
+  In Knob.cpp, atomic load and store operations (__atomic_load_n()) are used to safely access the rotationISR variable without the need for explicit mutex locking.
+  Separation of Concerns:
+  Each class (Inputs, Knob, RX_Message) encapsulates its data and methods, promoting modular and structured code design.
+
