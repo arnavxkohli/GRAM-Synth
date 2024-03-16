@@ -28,7 +28,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
 
 ## Audio
   ### Tone decay
-  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: $Vout = (decay factor) ^ t$.
+  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: $Vout = (decay factor) ^ t$. The decay factor is distinguishable for every pressed key and as soon as a key is released, `decay_factor` is reset to 1;
   ### Issues with using decay with lut
   Because the keys are being detected in the order of their position, we will encounter a scenario where:
   1. If there are existing keys that have been presses for a while. Their decay factor would have been quite small.
