@@ -34,7 +34,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
 The difference between the waveform sound and a beat sound is that, an waveform is periodic whereas a beat is typically non-periodic and has a varying frequency over time. To solve this issue, a switch is used in the Vout calculation.
 First, the first few instruments (0-2) were assigned to be waveform generating and the remaining (3-4) to be the beats. If instru variable is greater than 2, we enter the beat generating section.
 In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
-  Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would results in additional variables being created to detect whether a receieved instruction demands a beat to be generated since this would addes workload in the 'SampleISR()' function.
+  Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would results in additional variables being created to detect whether a receieved instruction demands a beat to be generated since this would addes workload in the `SampleISR` function.
 
 ## Communication
 ## Threads timing analysis
