@@ -35,6 +35,10 @@ First, the first few instruments (0-2) were assigned to be waveform generating a
 In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
 
 ## Communication
+## Threads timing analysis
+The table below summarised all the tasks with their priority and timing constrains:
+| Task name | initiation int. | execution time | priority|
+| --- | --- | --- | --- |
 ## Methods used to guarantee safe access and synchronization:
   ### Semaphore-Based Mutex for Critical Sections:
   In Inputs.cpp, Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Inputs.cpp, Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (currentInputs, previousInputs, rotation, rotationISR, currentStepSize, RX_Message) during updates or reads.
