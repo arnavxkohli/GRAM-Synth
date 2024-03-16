@@ -8,9 +8,9 @@
   
   First, a Boolean array of length 12 is used in place of the input variable. For every key scanning execution, the key that’s being pressed is registered true in corresponding entry in the array and this key will get skipped in the next scanning iteration. There are 3 cases that can happen:
   1.	A key was previously not being pressed and is now being pressed. In this case, the entry in the array corresponding to that key is set true and `nok` will increase by 1.
-  
-  3.	A key was previously being presses and is now released. In this case we used a std::find function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1.
+  2.	A key was previously being presses and is now released. In this case we used `std::find()` function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1.
   4.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
+![](3.png)
 
 ## Display
   ### Description
