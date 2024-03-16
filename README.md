@@ -17,6 +17,7 @@
   ### Code analysis
   The task is implemented as a FreeRTOS task using xTaskCreate. It has a period of 100ms as specified by xFrequency. It retrieves the task handle to manage task operations. The displayUpdateFunction is called within this task to update the OLED display content. The OLED display update involves clearing the buffer, drawing text and graphics, and sending the buffer to the display.
 ## User interface
+The main control interface of the system is via the 4 knobs on the keyboard. Each knob is responsible for change the: volume, decay rate, instrument and octave of the sound played.
 ## Instrument waveform generation
   ### Instrument look-up-table (LUT)
   Commercial synthesizers stores sound waveforms in their internal memory. This is because a lot of the real instrument sounds cannot be easily generated using mathematical functions. A typical approach is to record the sound of instruments playing, and then extract a section of it then play it repeatedly.
