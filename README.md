@@ -37,7 +37,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
   4. This resulted in a sudden change of volume of key 'E'.
   ![](1.png)
   1. If there are some higher pitched keys being pressed previously, their decay factor would be small.
-  2. Then is a lower pitched key is presses, it will get allocated to the start of the array.
+  2. Then if a lower pitched key is pressed, it will get allocated to the start of the array.
   3. The new key will immediately have a quite volume, even though it is not supposed to happen.
   ![](2.png)
   To solve this issue, we need to make sure that the keys always remain at their assigned location in the `tone_idx` array.
