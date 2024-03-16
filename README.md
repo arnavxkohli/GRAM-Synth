@@ -31,7 +31,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
   Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: $Vout = (decay factor) ^ t$.
   ### Issues with using decay with lut
   Because the keys are being detected in the order of their position, we will encounter a scenario where:
-  ![d](1.png)
+  ![ffffffffffffffffd](1.png)
   
   ### Beat function
   The synthesizer also has the function of using the keyboard as a beat generator.
