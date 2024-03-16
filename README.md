@@ -1,7 +1,7 @@
 # GRAM's Music Synthesizer
 ## Key press detection
   ### Decoupled key scanning
-  A basic key scanning function would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the
+  The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the
   decay function, the maximum amplitude of sound wave of each key is decreasing over time and the decay is independent to each key.
   
   This would create the issue of keys being desynchronised (see section 2). To solve this issue, when a key is released, it must remain at the same position as before instead of moving to a lower position. In other words, the keys must be detected in the order of their presses, not in the order of their position.
