@@ -28,7 +28,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
 
 ## Audio
   ### Tone decay
-  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time.
+  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: $Vout = decay_factor ^ t$.
   ### Beat function
   The synthesizer also has the function of using the keyboard as a beat generator.
 The difference between the waveform sound and a beat sound is that, an waveform is periodic whereas a beat is typically non-periodic and has a varying frequency over time. To solve this issue, a switch is used in the Vout calculation.
