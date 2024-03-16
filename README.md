@@ -1,5 +1,12 @@
 # GRAM's Music Synthesizer
 ## Key press detection
+  ### Basic key scanning
+  First, a for loop of 12 iterations is used to loop through the 12 keys.
+  ```
+  for (int i = 0; i < 12; i++) {
+    ...
+  }
+  ```
   ### Decoupled key scanning
   The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the
   decay function, the maximum amplitude of sound wave of each key is decreasing over time and the decay is independent to each key.
