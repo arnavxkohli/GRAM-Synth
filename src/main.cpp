@@ -174,6 +174,7 @@ void scanKeysFunction(uint8_t* TX_Message) {
 			press_list[i] = false; // Set the "is-pressed" entry for that key to true
 			key = "";
 			TX_Message[0] = 'R';
+      TX_Message[2] = i;
 			nok --;
 			int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
 			int idx = std::distance(tone_idx, p);
@@ -436,7 +437,7 @@ void setup() {
 	sampleTimer->attachInterrupt(doubleBufferISR);
 	sampleTimer->resume();
 
-	CAN_Init(true);
+	CAN_Init(false);
 	setCANFilter(0x123,0x7ff);
 	CAN_RegisterRX_ISR(CAN_RX_ISR);
 	CAN_RegisterTX_ISR(CAN_TX_ISR);
