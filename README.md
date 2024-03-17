@@ -60,8 +60,8 @@
   ### Code analysis
   The task is implemented as a FreeRTOS task using xTaskCreate. It has a period of 100ms as specified by xFrequency. It retrieves the task handle to manage task operations. The displayUpdateFunction is called within this task to update the OLED display content. The OLED display update involves clearing the buffer, drawing text and graphics, and sending the buffer to the display.
 ## User interface
-The main control interface of the system is via the 4 knobs on the keyboard. Each knob is responsible for change the: volume, decay rate, instrument and octave of the sound played.
-The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code bits of the knob row of the key matrix. `Knob::Knob()` set the upper, lower bound of a knob variable and the increment size whnever the knob is rotated. `Knob.updateRotation()` detects the changes in the binary bit pairs:
+The main control interface of the system is via the 4 knobs on the keyboard. Each knob is responsible for changing the: volume, decay rate, instrument and octave of the sound played.
+The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code bits of the knob row of the key matrix. `Knob::Knob()` set the upper, lower bound of a knob variable and the increment size whenever the knob is rotated. `Knob.updateRotation()` detects the changes in the binary bit pairs:
 | BA prev | BA next | operation |
 | --- | --- | --- |
 | 00 | 01 | + increment |
@@ -88,22 +88,22 @@ To improve detection resolution, the indeterminant states of the knob rotation i
 
 To do this, a `std::vector<std::vector<std::vector<uint16_t>>> waveform_lut` is created. It’s a IxfxT C++ vector where I is the number of instruments, f is the number of frequencies (in this case 12) and T is the number of entries in a full period of that frequency. 
 
-Inside the double buffer writing task, Vout is calculated by reading the entries in waveform_lut by indexing with instru, tone_idx, t and Ts. The summed amplitude from multiple frequencies will be divided by the number of keys (nok) to ensure it’s between 0 and 4095. The first dimension of the lut contains all the stored instrument samples playable. The second dimension contains all the sound samples of all the freqeuncies of that instrument. And the last dimension contains the amplitude samples of a single period waveform of a particular frequency. Since the vector size is finite and it is required to loop through every samples of a period, we cannot let the timer t to increase indefinitely. Instead, we used the remainder `t % Ts[tone_idx[i]]` to access an entire preiod repeatedly. `uint16_t Ts[37]` stores the 36 periods plus a idle period and the `tone_idx` is used to access which periods are present.
+Inside the double buffer writing task, Vout is calculated by reading the entries in waveform_lut by indexing with instru, tone_idx, t and Ts. The summed amplitude from multiple frequencies will be divided by the number of keys (nok) to ensure it’s between 0 and 4095. The first dimension of the lut contains all the stored instrument samples playable. The second dimension contains all the sound samples of all the frequencies of that instrument. And the last dimension contains the amplitude samples of a single period waveform of a particular frequency. Since the vector size is finite and it is required to loop through every samples of a period, we cannot let the timer t to increase indefinitely. Instead, we used the remainder `t % Ts[tone_idx[i]]` to access an entire period repeatedly. `uint16_t Ts[37]` stores the 36 periods plus a idle period and the `tone_idx` is used to access which periods are present.
 
 ## Audio
   ### Instrument LUT in SampleISR()
   The cumulative `stepSize` in SampleISR function is replaced with a LUT read operation where `instru`, `tone_idx` and `Ts` are used to read a single amplitude of a single frequency from the LUT. This operation is repeated for as many number of keys (determined by the `nok` varaible). The resultant `Vout` is the sum of all amplitude at time `t`.
   
   ### Tone decay
-  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an expoential decay of `Vout` output volume: `Vout = decay_factor * decay_factor`. The decay factor is distinguishable for every pressed key and as soon as a key is released, `decay_factor` is reset to 1;
+  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an exponential decay of `Vout` output volume: `Vout = decay_factor * decay_factor`. The decay factor is distinguishable for every pressed key and as soon as a key is released, `decay_factor` is reset to 1;
   ### Decay factor variable in SampleISR()
-  Ideally, we would want to a standard expoential function: decay_factor $ = e^t$. But since `std::pow()` isa slow execution in C++ and if put into the SampleISR, would result in meeting of execution deadline and cause distorted or no audio output. Hence the expoential operation is replaced with an index function.
+  Ideally, we would want a standard exponential function: decay_factor $ = e^t$. But `std::pow()` is a slow execution in C++ and if put into the SampleISR, would result in meeting of execution deadline and cause distorted or no audio output. Hence the expoential operation is replaced with an index function.
   Another issue with decay_factor is that it is a `float` variable. Since decay_factor is changed by `class Knob`, which involves atomic operations (atomic operations does not allow floating points), we need to define a temp integer variable of decay_factor inside the `scanKeysFunctions`. This temp variable is changed by `decayKnob` and is divided by 100000 to convert to a float.
   
   ### Issues with using decay with lut
   Because the keys are being detected in the order of their position, we will encounter 2 possible error scenarios where:
-  1. If there are existing keys that have been presses for a while. Their decay factor would have been quite small.
-  2. Then if a new key enters the tone_idx array, it will be positioned at the end of the array. The decay factor of thie new tone however, is still quite large while the decay factor of the previous 2 keys are getting even smaller.
+  1. If there are existing keys that have been pressed for a while. Their decay factor would have been quite small.
+  2. Then if a new key enters the tone_idx array, it will be positioned at the end of the array. The decay factor of thie new tone however, is still quite large while the decay factor of the previous 2 keys is getting even smaller.
   3. Then if the first 2 keys are being released, the array would reallocate the 3rd key to the start of this array.
   4. This resulted in a sudden change of volume of key 'E'.
   ![](1.png)
@@ -111,7 +111,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
   2. Then if a lower pitched key is pressed, it will get allocated to the start of the array.
   3. The new key will immediately have a quite volume, even though it is not supposed to happen.
   ![](2.png)\\
-  To solve this issue, we need to make sure that the keys always remain at in the same location in the `tone_idx` array throughout.
+  To solve this issue, we need to make sure that the keys always remain at the same location in the `tone_idx` array throughout.
   
   ### Beat function
   The synthesizer also has the function of using the keyboard as a beat generator.
@@ -121,7 +121,7 @@ The difference between the waveform sound and a beat sound is that a waveform is
   
 First, for `instru` option of 0-2, we assign them to be waveform generating and the remaining `instru = 3 or 4` to be the beats. If `instru` is greater than 2, we enter the beat generating section.
 In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
-  Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would results in additional variables being created to detect whether a receieved instruction demands a beat to be generated since this would addes workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
+  Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would result in additional variables being created to detect whether a received instruction demands a beat to be generated since this would add workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
 
   ### Double buffer
 
