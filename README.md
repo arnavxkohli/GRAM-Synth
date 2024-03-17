@@ -16,7 +16,7 @@
   nok ++;
   TX_Message[0] = 'P';
   ```
-  The array `tone_idx` contains the key number `keynum` of the pressed key. `keynum` is increased by 12 times `octave` if the octave of the keyboard changes during operation. The string `key` reads and appends the new key from string array `keystrings`, which contains the symbols of all possible keys from C1 to B3. The `nok` variables stored the totoal keys being presses simutaneously and the transmission message `TX_message` will be set to 'P'.
+  The array `tone_idx` contains the key number `keynum` of the pressed key. `keynum` is increased by 12 times `octave` if the octave of the keyboard changes during operation. The string `key` reads and appends the new key from string array `keystrings`, which contains the symbols of all possible keys from C1 to B3. The `nok` variables stored the total keys being pressed simutaneously and the transmission message `TX_message` will be set to 'P'.
   ### Decoupled key scanning
   The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the decay function, the maximum amplitude of sound wave of each key is decreasing over time and the decay is independent to each key.
   
