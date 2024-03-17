@@ -33,7 +33,7 @@
     ...
   }
   ```
-  3.	A key was previously being presses and is now released. In this case we used `std::find()` function to location the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1. `std::distance` calculates the index position of the keynumber inside the `tone_idx` array.
+  3.	A key was previously being pressed and is now released. In this case we used `std::find()` function to locate the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1. `std::distance` calculates the index position of the keynumber inside the `tone_idx` array.
   ```
   for (int i = 0; i < 12; i++) {
     ...
@@ -48,7 +48,7 @@
     ...
   }
   ```
-  5.	A key was not pressed before and remains undressed or was pressed and remains being presses. Do nothing in this case.
+  5.	A key was not pressed before and remains unpressed or was pressed and remains being pressed. Do nothing in this case.
 
   The two figure below shows a comparison of key number storing operations under traditional method and decoupled key scanning.
   ![](4.png)
