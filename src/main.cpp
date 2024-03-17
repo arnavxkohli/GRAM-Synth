@@ -28,7 +28,7 @@ struct {
 
 
 Knob volumeKnob(12.0f, 0.0f, 1.0f);
-Knob decayKnob(0.99999f, 0.9995f, -0.00005f);
+// Knob decayKnob(0.9999f, 0.8f, -0.05f);
 Knob instrumentKnob(3.0f, 0.0f, 1.0f);
 
 RX_Message rxMessage;
@@ -193,8 +193,8 @@ void scanKeysFunction(uint8_t* TX_Message) {
 
 	// setRow(4);
 	// delayMicroseconds(3);
-  // decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
-	// 	std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
+  // decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
+	// 	std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
 
 	xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 }
@@ -312,7 +312,7 @@ void doubleBufferTask(void* pvParameters){
     xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
     for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
 
-	  uint32_t localRotation = static_cast<uint32_t>(volumeKnob.getRotationISR());
+	  uint32_t localRotation = volumeKnob.getRotationISR();
 	  // Serial.print(nok);
 	  // If there's at least a key being presses, do something
 	  if (nok != 0) {
@@ -323,7 +323,7 @@ void doubleBufferTask(void* pvParameters){
 	  	// tone_idx[i] = the period index corresponding to that particular key
 	  	// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
 	  	// instru = Selects the instrument, currrent is 0 - 3
-        uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
+      uint32_t instru = instrumentKnob.getRotationISR();
 	  	Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
  	  				waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
 	  			 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
@@ -551,7 +551,7 @@ void setup() {
 	CAN_TX_Semaphore = xSemaphoreCreateCounting(3,3);
 
 	doubleBuffer.doubleBufferSemaphore = xSemaphoreCreateBinary();
-    xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
+  xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
 
 	vTaskStartScheduler();
 }
