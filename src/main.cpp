@@ -240,8 +240,18 @@ void CAN_RX_Function(uint8_t* local_RX) {
 void CAN_TX_Function(uint8_t* msgOut) {
 	xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
 	xSemaphoreTake(CAN_TX_Semaphore, portMAX_DELAY);
-	CAN_TX(0x123, msgOut);
-	//xSemaphoreGive(CAN_TX_Semaphore);
+	CAN_TX(0x125, msgOut);
+  // #ifdef KEYBOARDNUM
+  //   #if KEYBOARDNUM == 1
+  //     CAN_TX(messageID1, msgOut);
+  //   #elif KEYBOARDNUM == 2
+  //     CAN_TX(messageID2, msgOut);
+  //   #elif KEYBOARDNUM == 3
+  //     CAN_TX(messageID3, msgOut);
+  //   #elif KEYBOARDNUM == 4
+  //     CAN_TX(messageID4, msgOut);
+  //   #endif
+  // #endif
 }
 
 void scanKeysTask(void * pvParameters) {
@@ -438,7 +448,8 @@ void setup() {
 	sampleTimer->resume();
 
 	CAN_Init(false);
-	setCANFilter(0x123,0x7ff);
+  setCANFilter();
+	// setCANFilter(0x123,0x7ff);
 	CAN_RegisterRX_ISR(CAN_RX_ISR);
 	CAN_RegisterTX_ISR(CAN_TX_ISR);
 	CAN_Start();
