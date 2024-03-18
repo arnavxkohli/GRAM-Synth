@@ -17,6 +17,9 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
+bool receiver = false;
+bool transmitter = true;
+
 //DAC_HandleTypeDef hdac;
 
 struct {
@@ -168,6 +171,9 @@ void scanKeysFunction(uint8_t* TX_Message) {
 			TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
 			key = key + keystrings[i];
 			nok ++; // Increase the no. of key being presses
+      if(transmitter){
+        xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+      }
 		}
 		// 2: A key was presses before and is now being released
 		else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
@@ -179,6 +185,9 @@ void scanKeysFunction(uint8_t* TX_Message) {
 			int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
 			int idx = std::distance(tone_idx, p);
 			tone_idx[idx] = 0;
+      if(transmitter){
+        xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+      }
 		}
 		// 3: A key was not presses and is nor currently being presses or a key was presses and is still being pressed
 		// Skip the key detetction for those keys
@@ -196,8 +205,6 @@ void scanKeysFunction(uint8_t* TX_Message) {
 	// delayMicroseconds(3);
   // decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
 	// 	std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
-
-	xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 }
 
 void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
@@ -450,8 +457,12 @@ void setup() {
 	CAN_Init(false);
   setCANFilter();
 	// setCANFilter(0x123,0x7ff);
-	CAN_RegisterRX_ISR(CAN_RX_ISR);
-	CAN_RegisterTX_ISR(CAN_TX_ISR);
+  if(receiver){
+    CAN_RegisterRX_ISR(CAN_RX_ISR);
+  }
+  if (transmitter) {
+    CAN_RegisterTX_ISR(CAN_TX_ISR);
+  }
 	CAN_Start();
 
 	TaskHandle_t scanKeysHandle = NULL;
@@ -490,23 +501,27 @@ void setup() {
 			&scanKeysHandle /* Pointer to store the task handle */
 		);
 
-		xTaskCreate(
-			CAN_RX_Task,
-			"CAN_RX_Task",
-			64,
-			NULL,
-			1,
-			&CAN_RXHandle
-		);
+    if(receiver){
+        xTaskCreate(
+        CAN_RX_Task,
+        "CAN_RX_Task",
+        64,
+        NULL,
+        1,
+        &CAN_RXHandle
+      );
+    }
 
-		xTaskCreate(
-			CAN_TX_Task,
-			"CAN_TX_Task",
-			64,
-			NULL,
-			1,
-			&CAN_TXHandle
-		);
+    if(transmitter){
+        xTaskCreate(
+        CAN_TX_Task,
+        "CAN_TX_Task",
+        64,
+        NULL,
+        1,
+        &CAN_TXHandle
+      );
+    }
 
 		xTaskCreate(
         	doubleBufferTask,
