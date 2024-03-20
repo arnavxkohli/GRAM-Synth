@@ -93,7 +93,7 @@ Inside the double buffer writing task, Vout is calculated by reading the entries
 One issue with using a lut is that it taken up a significant amount of static memory in the CPU. This may not be a problem for commercial synthesizers as they tend to have more storage available. However, for our lab ketboard, it is crucial to optimise the memory usage.
 The traditional method of incoporating a waveform LUT into `SampleISR` involves storing the amplitudes of a single period for all possible frequencies for all instruments. This quickly get inefficient as there can be as many as 96 frequencies hence $instruments \time 96 \times T$. Let's say a commercially viable synthesizer needs 50 different instruments and the average period length contains around 100 entries, then there will be $50 \times 96 \times 100 = 480000$ entries or 1.92 MB if using 32 bits entries (A STM32 processor typically has 2 MB of flash memory)!
 To optimise the LUT storage, we use the undersampling technique. This method involves delibrately causing favourble aliasing effect by not sampling all the entries of a period. First, it is needed to define a base waveform which has the lowest frequency (such as C0) and the most entries in a single period. Then, to obtain all other frequencies higher than the base frequency, we'll only need to sample the base waveform at intervals greater than 1. For a base waveform with period $T_0 = N$ entries and we want to sample it at $T_1 = n$ entries, the formula below gives the desirable sampling interval:
-$$t_s = (t * \frac{N}{n}) \space mod \space N$$
+$$t_s = (t * \frac{N}{n}) \space mod \space N, \space n \le N$$
 Where t is the base timer that increment by 1 for every sample iteration.
 
 ## Audio
