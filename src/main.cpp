@@ -172,15 +172,16 @@ void displayUpdateFunction(uint32_t ID, uint8_t *localRX) {
   u8g2.setCursor(77, 20);
   u8g2.print("nok:");
   u8g2.print(nok);
-  u8g2.setCursor(77, 10);
-  u8g2.print("t:");
-  u8g2.print(t);
 
   memcpy(localRX, rxMessage.getRX_Message(), 8);
   u8g2.setCursor(66, 30);
   u8g2.print((char)localRX[0]);
   u8g2.print(localRX[1]);
   u8g2.print(localRX[2]);
+
+  u8g2.setCursor(77, 10);
+  u8g2.print("idx:");
+  u8g2.print(tone_idx[0]);
 
   u8g2.sendBuffer(); // transfer internal memory to the display
 
@@ -191,9 +192,21 @@ void displayUpdateFunction(uint32_t ID, uint8_t *localRX) {
 void CAN_RX_Function(uint8_t *local_RX) {
   xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
   rxMessage.receiveMessage(local_RX);
-  if (!transmitter) {
-    __atomic_store_n(&currentStepSize, rxMessage.getStepSize(),
-                     __ATOMIC_RELAXED);
+  if (!transmitter) { // Only execute this code if not in loopback mode
+	for(int i = 0; i < 6; i++){
+		if(i == 0 && local_RX[0] == 'P'){
+			tone_idx[0] = local_RX[2] + 1;
+		} else {
+			tone_idx[i] = 0;
+		}
+	}
+	if(local_RX[0] == 'P'){
+		nok = 1;
+	} else {
+		nok = 0;
+	}
+    // __atomic_store_n(&currentStepSize, rxMessage.getStepSize(),
+    //                  __ATOMIC_RELAXED);
   }
 }
 
@@ -457,16 +470,15 @@ void setup() {
               &scanKeysHandle /* Pointer to store the task handle */
   );
 
-  if (receiver) {
-    xTaskCreate(CAN_RX_Task, "CAN_RX_Task", 64, NULL, 1, &CAN_RXHandle);
-  }
-
   if (transmitter) {
-    xTaskCreate(CAN_TX_Task, "CAN_TX_Task", 64, NULL, 1, &CAN_TXHandle);
+    xTaskCreate(CAN_TX_Task, "CAN_TX_Task", 128, NULL, 1, &CAN_TXHandle);
   }
 
-  xTaskCreate(doubleBufferTask, "doubleBuffer", 256, NULL, 1,
-              &doubleBufferHandle);
+  if (receiver) {
+    xTaskCreate(CAN_RX_Task, "CAN_RX_Task", 128, NULL, 1, &CAN_RXHandle);
+	xTaskCreate(doubleBufferTask, "doubleBuffer", 256, NULL, 1,
+		&doubleBufferHandle);
+  }
 
 #endif
 
@@ -513,8 +525,7 @@ void setup() {
             << (micros() - startTime) / 32 << " microseconds" << std::endl;
 
   std::cout << "" << std::endl;
-  while (1)
-    ;
+  while (1);
 #endif
 
   CAN_TX_Semaphore = xSemaphoreCreateCounting(3, 3);
