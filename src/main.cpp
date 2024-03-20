@@ -17,7 +17,7 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
-bool receiver = false;
+bool receiver = true;
 bool transmitter = true;
 
 //DAC_HandleTypeDef hdac;
@@ -29,10 +29,10 @@ struct {
   SemaphoreHandle_t doubleBufferSemaphore;
 } doubleBuffer;
 
-
-Knob volumeKnob(12.0f, 0.0f, 1.0f);
-// Knob decayKnob(0.9999f, 0.8f, -0.05f);
-Knob instrumentKnob(3.0f, 0.0f, 1.0f);
+Knob volumeKnob(8, 0, 1);
+Knob decayKnob(2, 0, 1);
+Knob instrumentKnob(2, 0, 1);
+Knob octaveKnob(5, 0, 1);
 
 RX_Message rxMessage;
 QueueHandle_t msgInQ;
@@ -42,29 +42,6 @@ SemaphoreHandle_t CAN_TX_Semaphore;
 
 //Display driver object
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
-
-// This is used so that gpio_state can be selected by integers
-const GPIO_PinState gpio_state[2] = {GPIO_PIN_RESET, GPIO_PIN_SET};
-// This stores the gpio pinouts corresponding to column idx C0 - 3
-const uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};
-//// Additional variables
-std::string key;
-int keynums;
-int tone_idx[6] = {0}; // The indices (0 - 12) of the waveform periods that the are being selected to play in the audio
-std::vector<std::vector<std::vector<uint32_t>>> waveform_luts; // the waveform lut stores the insturment waveforms.
-int nok = 0; // No. of keys currently being presses simutaneously
-int instru = 0; // Instrument idx, current there are 4 instruments
-// Recodes whether a key is being presses. This filters out the pressed keys and enables the key to be detected in the order of their presses
-bool press_list[12] = {false};
-
-const uint32_t frequencies[12] = {262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494};
-std::string keystrings[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-uint32_t Ts[13] = {};
-
-int t = 0; // Initialised timer
-float decay[6] = {1};
-float decay_factor = 0.99999;
-uint32_t Vout;
 
 //Function to set outputs using key matrix
 void setOutMuxBit(const uint8_t bitIdx, const bool value) {
@@ -166,10 +143,10 @@ void scanKeysFunction(uint8_t* TX_Message) {
 		// 1: A key was not presses before and is now being presses
 		if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
 			press_list[i] = true; // Set the "is-pressed" entry for that key to true
-			tone_idx[nok] = i + 1;
+			tone_idx[nok] = i + 1 + octave * 12;
 			TX_Message[0] = 'P';
 			TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
-			key = key + keystrings[i];
+			key = key + keystrings[i + octave * 12];
 			nok ++; // Increase the no. of key being presses
       if(transmitter){
         xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
@@ -201,41 +178,49 @@ void scanKeysFunction(uint8_t* TX_Message) {
   instrumentKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
-	// setRow(4);
-	// delayMicroseconds(3);
-  // decayKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
-	// 	std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
+	setRow(4);
+	delayMicroseconds(3);
+	instrumentKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
+		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
+	octaveKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
+		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
+	instru = instrumentKnob.getRotationISR();
+	decay_factor = decay_list[decayKnob.getRotationISR()];
+	octave = octaveKnob.getRotationISR();
 }
 
 void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
-	//Update display
-	u8g2.clearBuffer();         // clear the internal memory
+    //Update display
+    u8g2.clearBuffer();         // clear the internal memory
 
-	u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-	u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
-	u8g2.setCursor(2, 20);
-	u8g2.print("Volume:");
-	u8g2.print(volumeKnob.getRotation());
-	u8g2.setCursor(2, 30);
-	u8g2.print("Vout:");
-	u8g2.print(Vout);
-	u8g2.setCursor(77, 20);
-	u8g2.print("nok:");
-	u8g2.print(nok);
-	u8g2.setCursor(77, 10);
-	u8g2.print("t:");
-	u8g2.print(t);
+    u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
+    u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
+	std::string display_vol = "Vol: " + std::to_string(volumeKnob.getRotation() * 125 / 10) + "%";
+    u8g2.drawStr(2, 20, display_vol.c_str());
+	u8g2.setCursor(100, 30);
+	u8g2.print(instrumentKnob.getRotation());
+	u8g2.setCursor(120, 30);
+	u8g2.print(octaveKnob.getRotation() + 1);
+	u8g2.setCursor(0, 30);
+	u8g2.print(decayKnob.getRotation());
+    // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
+    u8g2.drawStr(50, 30, key.c_str());
+    // xSemaphoreGive(sysState.mutex);
+    memcpy(localRX, rxMessage.getRX_Message(), 8);
 
-	memcpy(localRX, rxMessage.getRX_Message(), 8);
-	u8g2.setCursor(66,30);
-	u8g2.print((char) localRX[0]);
-	u8g2.print(localRX[1]);
-	u8g2.print(localRX[2]);
+    // u8g2.setCursor(50,30);
+    // u8g2.print((char) localRX[0]);
+    // u8g2.print(nok);
+	// u8g2.print(keynum);
+    // u8g2.setCursor(70,30);
+    // u8g2.print((char) localRX[0]);
+    // u8g2.print(localRX[1]);
+    // u8g2.print(localRX[2]);
 
-	u8g2.sendBuffer();          // transfer internal memory to the display
+    u8g2.sendBuffer();          // transfer internal memory to the display
 
-	//Toggle LED
-	digitalToggle(LED_BUILTIN);
+    //Toggle LED
+    digitalToggle(LED_BUILTIN);
 }
 
 void CAN_RX_Function(uint8_t* local_RX) {
@@ -342,18 +327,17 @@ void doubleBufferTask(void* pvParameters){
 	  	// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
 	  	// instru = Selects the instrument, currrent is 0 - 3
       uint32_t instru = instrumentKnob.getRotationISR();
-	  	Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
- 	  				waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
-	  			 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
-	  				waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
-	  				waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
-	  				waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) /
-					std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+		Vout = (waveform_lut[instru][(t * 917 / Ts[tone_idx[0]]) % 917] * decay[0] * (Ts[tone_idx[0]] != 1) +
+					  waveform_lut[instru][(t * 917 / Ts[tone_idx[1]]) % 917] * decay[1] * (Ts[tone_idx[1]] != 1) +
+					  waveform_lut[instru][(t * 917 / Ts[tone_idx[2]]) % 917] * decay[2] * (Ts[tone_idx[2]] != 1) +
+					  waveform_lut[instru][(t * 917 / Ts[tone_idx[3]]) % 917] * decay[3] * (Ts[tone_idx[3]] != 1) +
+					  waveform_lut[instru][(t * 917 / Ts[tone_idx[4]]) % 917] * decay[4] * (Ts[tone_idx[4]] != 1) +
+					  waveform_lut[instru][(t * 917 / Ts[tone_idx[5]]) % 917] * decay[5] * (Ts[tone_idx[5]] != 1)) / max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
 
         // analogWriteResolution(12);
         // analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
 
-		Vout = Vout >> (12 - localRotation);
+		Vout = Vout >> (8 - localRotation);
         t++; // increment timer
       }
   	  // If no keys are being pressed the timer resets along with the decay factors
@@ -431,15 +415,9 @@ void setup() {
 	u8g2.begin();
 	setOutMuxBit(DEN_BIT, HIGH);  //Enable display power supply
 
-	waveform_luts.push_back(sawtooth1());
-	waveform_luts.push_back(sinewave());
-	waveform_luts.push_back(piano1());
-	waveform_luts.push_back(sawtooth2());
-
-	Ts[0] = 1;
-	for (int i = 1; i <= 12; i++) {
-		Ts[i] = 22000 / frequencies[i - 1];
-	}
+	waveform_lut.push_back(sawtooth());
+	waveform_lut.push_back(sinewave());
+	waveform_lut.push_back(piano1());
 
 	//Initialise UART
 	Serial.begin(9600);
@@ -450,11 +428,11 @@ void setup() {
 	TIM_TypeDef *Instance = TIM1;
 	HardwareTimer *sampleTimer = new HardwareTimer(Instance);
 
-	sampleTimer->setOverflow(22000, HERTZ_FORMAT);
+	sampleTimer->setOverflow(30000, HERTZ_FORMAT);
 	sampleTimer->attachInterrupt(doubleBufferISR);
 	sampleTimer->resume();
 
-	CAN_Init(false);
+	CAN_Init(true);
   setCANFilter();
 	// setCANFilter(0x123,0x7ff);
   if(receiver){

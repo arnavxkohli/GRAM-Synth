@@ -1,22 +1,22 @@
 #include "Knob.h"
 
-Knob::Knob(float upperBound, float lowerBound, float increment)
+Knob::Knob(int upperBound, int lowerBound, int increment)
   : rotationUpperBound(upperBound), rotationLowerBound(lowerBound), increments(increment) {
-    this->rotation = lowerBound;
-    this->rotationISR = static_cast<uint32_t>(lowerBound);
+  this->rotation = lowerBound;
+  this->rotationISR = lowerBound;
 }
 
 uint32_t Knob::getRotationISR() {
-    return __atomic_load_n(&this->rotationISR, __ATOMIC_RELAXED);;
+  return __atomic_load_n(&this->rotationISR, __ATOMIC_RELAXED);
 }
 
-float Knob::getRotation() {
-    float rotation;
-    xSemaphoreTake(this->mutex, portMAX_DELAY);  // Acquire the mutex
-    rotation = this->rotation;  // Safely read the value of rotation
-    xSemaphoreGive(this->mutex);  // Release the mutex
+int Knob::getRotation() {
+  int rotation;
+  xSemaphoreTake(this->mutex, portMAX_DELAY);  // Acquire the mutex
+  rotation = this->rotation;  // Safely read the value of rotation
+  xSemaphoreGive(this->mutex);  // Release the mutex
 
-    return rotation;
+  return rotation;
 }
 
 void Knob::updateRotation(std::string BA_curr) {
@@ -24,7 +24,7 @@ void Knob::updateRotation(std::string BA_curr) {
 
     std::string state = this->BA_prev + BA_curr;
 
-    float localRotation = this->rotation;
+    int localRotation = this->rotation;
 
     if (state == "0001" || state == "1110") {
       localRotation = localRotation < this->rotationUpperBound ? localRotation + this->increments : localRotation;
@@ -45,7 +45,7 @@ void Knob::updateRotation(std::string BA_curr) {
     }
 
     this->rotation = localRotation;
-    this->rotationISR = static_cast<uint32_t>(localRotation);
+    this->rotationISR = localRotation;
     this->BA_prev = BA_curr;
 
     xSemaphoreGive(this->mutex);
