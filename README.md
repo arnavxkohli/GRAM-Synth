@@ -74,8 +74,8 @@
   3.	A key was not pressed before and remains unpressed or was pressed and remains being pressed. Do nothing in this case.
 
   The two figure below shows a comparison of key number storing operations under traditional method and decoupled key scanning.
-  ![](4.png)
-  ![](3.png)
+  ![](images/4.png)
+  ![](images/3.png)
 
 ## Display
   ### Description
@@ -88,6 +88,8 @@ The main control interface of the system is via the 4 knobs on the keyboard. The
 - Decay (3 modes)
 - Instrument (3 instruments)
 - Octave ()
+
+![](images/display.png)
 
 The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code bits of the knob row of the key matrix. These classes inherit their mutexes from `sysState.h` which in it's destructor also ensures that the mutex is freed. `Knob::Knob()` (constructor) set the upper, lower bound of a knob variable and the increment size whenever the knob is rotated. This is convenient because the knobs have different purposes and different boundaries of operation. `Knob.updateRotation()` detects the changes in the binary bit pairs:
 | BA prev | BA next | operation |
@@ -148,18 +150,18 @@ To improve detection resolution, the indeterminant states of the knob rotation i
   2. Then if a new key enters the tone_idx array, it will be positioned at the end of the array. The decay factor of thie new tone however, is still quite large while the decay factor of the previous 2 keys is getting even smaller.
   3. Then if the first 2 keys are being released, the array would reallocate the 3rd key to the start of this array.
   4. This resulted in a sudden change of volume of key 'E'.
-  ![](1.png)
+  ![](images/1.png)
   1. If there are some higher pitched keys being pressed previously, their decay factor would be small.
   2. Then if a lower pitched key is pressed, it will get allocated to the start of the array.
   3. The new key will immediately have a quite volume, even though it is not supposed to happen.
-  ![](2.png)\\
+  ![](images/2.png)\\
   To solve this issue, we need to make sure that the keys always remain at the same location in the `tone_idx` array throughout.
   
   ### Beat function
   The synthesizer also has the function of using the keyboard as a beat generator.
 The difference between the waveform sound and a beat sound is that a waveform is periodic whereas a beat is typically non-periodic and has a varying frequency over time. To solve this issue, a switch is used in the Vout calculation.
 
-  ![A beat is non-periodic](5.png)
+  ![A beat is non-periodic](images/5.png)
   
 First, for `instru` option of 0-2, we assign them to be waveform generating and the remaining `instru = 3 or 4` to be the beats. If `instru` is greater than 2, we enter the beat generating section.
 ```
@@ -288,6 +290,8 @@ Similar to receiving messages, transmitting messages depended on the polling fun
 |`RECEIVER`|`CAN_RX_Task`, `doubleBufferTask`, `CAN_RX_ISR`, overwriting `nok` & `tone_idx`|
 |`TRANSMITTER`||
 |`LOOPBACK`||
+
+Videos showing the various modes can be found in the `videos/` folder of this repository.
 ## Timing analysis
 To imeplement timing analysis of each task, we must let each task to run only once. To do this, we defined a `XXXFunction()` which is called repeatedly in a `XXXTask()`:
 ```
@@ -333,5 +337,5 @@ Semaphores are acquired with a timeout `portMAX_DELAY` to prevent deadlock situa
  ### Separation of Concerns:
   `Knob` encapsulates its data and methods, promoting modular and structured code design.
 ## Inter-Task Dependencies
-![ESCW2_dependency_graph](https://hackmd.io/_uploads/H1pJZW50T.png)
+![](images/dependency-graph.jpeg)
 Above is a graphical illustration of our musical synthesiser program, each Task and ISR is represented by round rectangles and each dependecy is represented by an arrow. We can see starting from `scanKeysTask()` the `keys.mutex` dependecy is shared by both the `displayUpdate()` task and the `doubleBufferTask()`, this is acceptable as the mutex is thread-safe and would be unlocked before a task is finished. the `doubleBufferTask()` thread and the `doubleBufferISR()` both make use of the `doubleBuffer.sempahore` when writing and reading from the double buffer however this operation is deadlock free as `doubleBufferTask()` captures the semaphore during the sample generation and the ISR releases agin when it has finished swapping the pointers, the semaphore is also released once during the setup phase as to not block the first loop. When the board is setup in transmitter mode, a message queue is generated, whereby the 'scanKeysTask()` will send the 'msgOutQ` and the `CAN_TX_Task()` will receive it; The synchronisation of the `CAN_TX_Task()` is dictated by the `CAN_TX_Semaphore` which acts as a counting semaphore and essentially controls access to the CAN transmission process, this will not cause deadlock as the `CAN_TX_Semaphore` is taken when the thread wants exclusive access before sending a message and released onec the ISR has queued a message for transmission. If reciever mode is enabled, The `CAN_RX_ISR` is responsible to receive the CAN transmission and send the message queue via `msgInQ`, this is then in turn received by the the `CAN_RX_Task()`, decoupling the CAN reception allows them to operate independetly and ensure efficient message handling even under heavier loads, deadlock is prevented as the ISR is off-loaded, resulting in timely execution without the risk of delaying or blocking critical operations.
