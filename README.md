@@ -3,13 +3,13 @@
   ### Basic key scanning
   First, the `digitalRead(GPIOA, col)` functions are replaced by `!HAL_GPIO_ReadPin()` to increase execution speed. The input to `col` is a array of length 4 defined as `uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};`.
   Then, a for loop of 12 iterations is used to loop through the 12 keys.
-  ```
+  ```c++
   for (int i = 0; i < 12; i++) {
     ...
   }
   ```
   Then, use floor division `/` to ensure that only 3 rows are being addressed for 12 iterations: `setRow(i / 4)`. The remainder operation `%` is used to loop through each column in each row: `!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4])`. This enables the read key function to be executed in a single loop. For each key being detected:
-  ```
+  ```c++
   keynum = i + 1 + octave * 12;
   tone_idx[nok] = keynum;
   key = key + keystrings[i + octave * 12];
@@ -18,13 +18,13 @@
   ```
   The array `tone_idx` contains the key number `keynum` of the pressed key. `keynum` is increased by 12 times `octave` if the octave of the keyboard changes during operation. The string `key` reads and appends the new key from string array `keystrings`, which contains the symbols of all possible keys from C1 to B3. The `nok` variables stored the total keys being pressed simutaneously and the transmission message `TX_message` will be set to 'P'.
   ### Decoupled key scanning
-  The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the decay function, the maximum amplitude of sound wave of each key is decreasing over time and the decay is independent to each key.
+  The `scanKeysTask` implemented in the lab instruction would always detect the pressed keys starting from the lowest position to the highest (0-12). This is okay if the sound waveform from each key is not changing over time. But with the `damp` function, the maximum amplitude of sound wave of each key is decreasing over time and the damping is independent to each key.
   
-  This would create the issue of keys being desynchronised (see section 2). To solve this issue, when a key is released, it must remain at the same position as before instead of moving to a lower position. In other words, the keys must be detected in the order of their presses, not in the order of their position.
+  This would create the issue of keys being desynchronised (see section 2). To solve this issue, when a key is released, its index stored in `tone_idx` must remain at the same position as before instead of moving to a lower position. In other words, the keys must be detected in the order of their presses, not in the order of their position.
   
-  First, a Boolean array of length 12 `bool press_list[12]` is used in place of the input variable. For every key scanning execution, the key that’s being pressed is registered true in corresponding entry in the array and this key will get skipped in the next scanning iteration. There are 3 cases that can happen:
+  First, a Boolean array of length 12 `bool press_list[12]` is used in place of the input variable. For every key scanning execution, the key that’s being pressed is registered true in the corresponding entry in the array and this key will get skipped in the next scanning iteration. There are 3 cases that can happen:
   1.	A key was previously not being pressed and is now being pressed. In this case, the entry in the array corresponding to that key is set true and `nok` will increase by 1.
-  ```
+  ```c++
   for (int i = 0; i < 12; i++) {
     if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
       press_list[i] = true;
@@ -34,7 +34,7 @@
   }
   ```
   2.	A key was previously being pressed and is now released. In this case we used `std::find()` function to locate the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1. `std::distance` calculates the index position of the keynumber inside the `tone_idx` array.
-  ```
+  ```c++
   for (int i = 0; i < 12; i++) {
     ...
     if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
@@ -60,8 +60,13 @@
   ### Code analysis
   The task is implemented as a FreeRTOS task using xTaskCreate. It has a period of 100ms as specified by xFrequency. It retrieves the task handle to manage task operations. The displayUpdateFunction is called within this task to update the OLED display content. The OLED display update involves clearing the buffer, drawing text and graphics, and sending the buffer to the display.
 ## User interface
-The main control interface of the system is via the 4 knobs on the keyboard. Each knob is responsible for changing the: volume, decay rate, instrument and octave of the sound played.
-The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code bits of the knob row of the key matrix. `Knob::Knob()` set the upper, lower bound of a knob variable and the increment size whenever the knob is rotated. `Knob.updateRotation()` detects the changes in the binary bit pairs:
+The main control interface of the system is via the 4 knobs on the keyboard. The knobs (from right to left) change:
+- Volume (12 levels possible)
+- Decay (3 modes)
+- Instrument (3 instruments)
+- Octave ()
+
+The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code bits of the knob row of the key matrix. These classes inherit their mutexes from `sysState.h` which in it's destructor also ensures that the mutex is freed. `Knob::Knob()` (constructor) set the upper, lower bound of a knob variable and the increment size whenever the knob is rotated. This is convenient because the knobs have different purposes and different boundaries of operation. `Knob.updateRotation()` detects the changes in the binary bit pairs:
 | BA prev | BA next | operation |
 | --- | --- | --- |
 | 00 | 01 | + increment |
@@ -69,7 +74,7 @@ The `Knob.h` and `Knob.cpp` contains the operations which reads the binary code 
 | 01 | 00 | - increment |
 | 10 | 11 | - increment |
 
-To improve detection resolution, the indeterminant states of the knob rotation is taken into account:
+To improve detection resolution, the indeterminant states of the knob rotation is taken into account. This is done using the private variable `incrementLast` which keeps track of if the last operation was an increment or not. The logic flow has been illustrated in the table below:
 | BA prev | BA next | last operation is + increment? | operation |
 | --- | --- | --- | --- |
 | 11 | 00 | Yes | + increment |
@@ -81,21 +86,25 @@ To improve detection resolution, the indeterminant states of the knob rotation i
 | 00 | 11 | Yes | + increment |
 | 00 | 11 | No | - increment |
 
-`Knob::getRotationISR()` performs atomic load and store operation and `Knob::getRotation()` returns the curent rotation value of a `Knob` class variable.
+`Knob::getRotationISR()` performs atomic load and store operation and `Knob::getRotation()` returns the curent rotation value of a `Knob` class variable. It is thread safe and acquires the previously mentioned mutex (from the constructor of the parent `sysState` class).
 ## Instrument waveform generation
   ### Instrument look-up-table (LUT)
   Commercial synthesizers stores sound waveforms in their internal memory. This is because a lot of the real instrument sounds cannot be easily generated using mathematical functions. A typical approach is to record the sound of instruments playing, and then extract a section of it then play it repeatedly.
 
-  To do this, a `std::vector<std::vector<std::vector<uint16_t>>> waveform_lut` is created. It’s a IxfxT C++ vector where I is the number of instruments, f is the number of frequencies (in this case 12) and T is the number of entries in a full period of that frequency. 
+  To do this, a `std::vector<std::vector<std::vector<uint8_t>>> waveform_lut` is created. It’s an `IxfxT` C++ vector where `I` is the number of instruments, `f` is the number of frequencies (in this case 12) and `T` is the number of entries in a full period of that frequency. 
   
   Inside the double buffer writing task, Vout is calculated by reading the entries in waveform_lut by indexing with instru, tone_idx, t and Ts. The summed amplitude from multiple frequencies will be divided by the number of keys (nok) to ensure it’s between 0 and 4095. The first dimension of the lut contains all the stored instrument samples playable. The second dimension contains all the sound samples of all the frequencies of that instrument. And the last dimension contains the amplitude samples of a single period waveform of a particular frequency. Since the vector size is finite and it is required to loop through every samples of a period, we cannot let the timer t to increase indefinitely. Instead, we used the remainder `t % Ts[tone_idx[i]]` to access an entire period repeatedly. `uint16_t Ts[37]` stores the 36 periods plus a idle period and the `tone_idx` is used to access which periods are present.
   
   ### Memory optimisation
   One issue with using a lut is that it taken up a significant amount of static memory in the CPU. This may not be a problem for commercial synthesizers as they tend to have more storage available. However, for our lab ketboard, it is crucial to optimise the memory usage.
+  
   The traditional method of incoporating a waveform LUT into `SampleISR` involves storing the amplitudes of a single period for all possible frequencies for all instruments. This quickly get inefficient as there can be as many as 96 frequencies hence $instruments \times 96 \times T$ entries in total. Let's say a commercially viable synthesizer needs 50 different instruments and the average period length contains around 466 entries, then there will be $50 \times 96 \times 466 = 2236800$ entries or 8.95 MB if using 32 bits entries (A STM32 processor typically has 2 MB of flash memory)!
+  
   To optimise the LUT storage, we use the undersampling technique. This method involves delibrately causing favourble aliasing effect by not sampling all the entries of a period. First, it is needed to define a base waveform which has the lowest frequency (such as C0) and the most entries in a single period. Then, to obtain all other frequencies higher than the base frequency, we'll only need to sample the base waveform at intervals greater than 1. For a base waveform with period $T_0 = N$ entries and we want to sample it at $T_1 = n$ entries, the formula below gives the desirable sampling interval:
   $$t_s = (t * \frac{N}{n}) \space mod \space N, \space n \le N$$
-  Where t is the base timer that increment by 1 for every sample iteration. This increases the memeory efficient by a factor of 96 as only 1 out of 96 freqeuncies is needed to output all other frequencies.
+  Where t is the base timer that increment by 1 for every sample iteration. This increases the memeory efficient by a factor of 96 as only 1 out of 96 freqeuncies is needed to output all other frequencies. The 3-dimensional LUT is now 2-dimensional:
+  
+`std::vector<std::vector<uint8_t>> waveform_lut;`
   
   ![](6.png)
 
@@ -103,11 +112,12 @@ To improve detection resolution, the indeterminant states of the knob rotation i
   ### Instrument LUT in SampleISR()
   The cumulative `stepSize` in SampleISR function is replaced with a LUT read operation where `instru`, `tone_idx` and `Ts` are used to read a single amplitude of a single frequency from the LUT. This operation is repeated for as many number of keys (determined by the `nok` varaible). The resultant `Vout` is the sum of all amplitude at time `t`.
   
-  ### Tone decay
-  Some Instruments has the property of producing sound whose amplitude decreases overtime. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double decay_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an exponential decay of `Vout` output volume: `Vout = decay_factor * decay_factor`. The decay factor is distinguishable for every pressed key and as soon as a key is released, `decay_factor` is reset to 1;
+  ### Damping strength
+  Some Instruments has the property of producing sound whose amplitude decreases overtime, e.g. the pedals of a piano. To replicate this effect in a digital synthesiser, Vout need to decrease over time. A new variable `double damp_factor` is created. During each interrupt of `SampleISR()` function, if any key press is detected (see 'Decoupled key scanning'), the decay factor variable will multply by itself to create an exponential decay of `Vout` output volume: `Vout = damp_factor * damp_factor`. The damp factor is distinguishable for every pressed key and as soon as a key is released, `damp_factor` is reset to 1 (idle state);
   ### Decay factor variable in SampleISR()
-  Ideally, we would want a standard exponential function: decay_factor $ = e^t$. But `std::pow()` is a slow execution in C++ and if put into the SampleISR, would result in meeting of execution deadline and cause distorted or no audio output. Hence the expoential operation is replaced with an index function.
-  Another issue with decay_factor is that it is a `float` variable. Since decay_factor is changed by `class Knob`, which involves atomic operations (atomic operations does not allow floating points), we need to define a temp integer variable of decay_factor inside the `scanKeysFunctions`. This temp variable is changed by `decayKnob` and is divided by 100000 to convert to a float.
+  Ideally, we would want a standard exponential function: decay_factor/$d = e^{t}$. But `std::pow()` is a slow execution in C++ and if put into the SampleISR, would result in meeting of execution deadline and cause distorted or no audio output. Hence the expoential operation is replaced with an index function.
+  Another issue with decay_factor is that it is a `float` variable. Since decay_factor is changed by `class Knob`, which involves atomic operations (atomic operations does not allow floating points), we need to define a temp integer variable of damp_factor inside the `scanKeysFunctions`. This temp variable is changed by `dampKnob` and is divided by 100000 to convert to a float.\
+  A better option would be to use an array which stores all the damping factors and then use the integer returned by `dampKnob` to index the array to select the desirable damping factor.
   
   ### Issues with using decay with lut
   Because the keys are being detected in the order of their position, we will encounter 2 possible error scenarios where:
@@ -219,28 +229,37 @@ void XXXTask(void * parameters) {
   }
 ```
 This enables both indefinite and single execution of any task.
-The table below summarised all the tasks with their priority and timing constrains:
+The table below summarised all the tasks with their priority and timing constrains when operating under worst-case-scenario with STM32 scheduler tick being taken into account:
 | Task name | initiation int. | latent execution time | priority|
 | --- | --- | --- | --- |
-| display | 100ms | 16.519ms | 1 |
-| Key scanning | 20ms | 0.299ms | 4 |
-| DoubleBuffer | 17ms | 2ms | 5 |
-| DoubleBuffer ISR | 0.045ms | 0.010ms | interrupt |
-| Data transmission | 60ms | 0.36ms | 2 |
-| Data decoding | 25.2ms | 0.468ms | 3 |
+| display | 100ms | 17.64ms | 1 |
+| Key scanning | 20ms | 1.287ms | 4 |
+| DoubleBuffer | 17ms | 3.035ms | 5 |
+| DoubleBuffer ISR | 0.045ms | 0.009ms | interrupt |
+| Data transmission | 60ms | 1.504ms | 2 |
+| Data decoding | 25.2ms | 1.684ms | 3 |
 
 The system's critical instant, $t_c$ must be less than the longest initiation interval, $\tau_n$ amoung the tasks. In this case, $\tau_n = 100ms$. The critical instant is calculated using:
 $$t_c = \sum_{k=1}^n \frac{\tau_n}{\tau_k}T_k$$
-Where $T_k$ is the latent execution time of each task. Based on the formula, the critical instant of our system is found to be 38.4ms, which is well below 100ms. The total execution time of each threads for exactly once was found to be 844.524ms. Therefore the percentage CPU utilisation is $\frac{16.519 + 0.299 + 0.003 + 0.36 + 0.468}{844.524} \times 100 = 2$ %.
+Where $T_k$ is the latent execution time of each task. Based on the formula, the critical instant of our system is found to be 53.04ms, which is well below 100ms. The percentage CPU utilisation is given by:
+
+$$U_T = \sum_{k=1}^n \frac{T_k}{\tau_k}$$
+
+Hence the percentage utilisation was found to be:
+
+$(\frac{17.64}{100} + \frac{1.287}{20} + \frac{3.035}{17} + \frac{0.009}{0.045} + \frac{1.504}{60} + \frac{1.684}{25.2}) \times 100 = 71$ %.
 ## Methods used to guarantee safe access and synchronization:
   ### Semaphore-Based Mutex for critical Sections:
-  In Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (rotation, rotationISR, RX_Message) during updates or reads.
-  Mutex Initialization:
-Each class (Knob, RX_Message) initializes its mutex in its constructor (SysState.cpp) using xSemaphoreCreateMutex().
-  Semaphore Timeouts:
-Semaphores are acquired with a timeout (portMAX_DELAY) to prevent deadlock situations where a task may indefinitely block waiting for a resource that never becomes available.
+  In `Knob.cpp`, a semaphore-based mutex is employed to protect critical sections of code (RAII) where shared data is accessed or modified. The `xSemaphoreTake()` and `xSemaphoreGive()` functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (`rotation`, `rotationISR`) during updates or reads.
+ ### Mutex Initialization:
+`Knob` initializes its mutex in its constructor (derived from parent `sysState.h`) using `xSemaphoreCreateMutex()``.
+ ### Semaphore Timeouts:
+Semaphores are acquired with a timeout `portMAX_DELAY` to prevent deadlock situations where a task may indefinitely block waiting for a resource that never becomes available.
   ### Atomic Load and Store Operations:
-  In Knob.cpp, atomic load and store operations (__atomic_load_n()) are used to safely access the rotationISR variable without the need for explicit mutex locking.
-  Separation of Concerns:
-  Each class (Knob, RX_Message) encapsulates its data and methods, promoting modular and structured code design.
+  In Knob.cpp, atomic load and store operations `__atomic_load_n()` are used to safely access the `rotationISR` variable without the need for explicit mutex locking.
+ ### Separation of Concerns:
+  `Knob` encapsulates its data and methods, promoting modular and structured code design.
   ### Queue:
+## Inter-Task Dependencies
+![ESCW2_dependency_graph](https://hackmd.io/_uploads/H1pJZW50T.png)
+Above is a graphical illustration of our musical synthesiser program, each Task and ISR is represented by round rectangles and each dependecy is represented by an arrow. We can see starting from `scanKeysTask()` the `keys.mutex` dependecy is shared by both the `displayUpdate()` task and the `doubleBufferTask()`, this is acceptable as the mutex is thread-safe and would be unlocked before a task is finished. the `doubleBufferTask()` thread and the `doubleBufferISR()` both make use of the doubleBuffer.sempahore when writing and reading from the double buffer however this operation is deadlock free as `doubleBufferTask()` captures the semaphore during the sample generation and the ISR releases agin when it has finished swapping the pointers, the semaphore is also released once during the setup phase as to not block the first loop. 
