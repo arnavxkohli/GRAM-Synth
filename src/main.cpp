@@ -17,8 +17,6 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
-#define RECEIVER
-
 #ifdef TRANSMITTER
 	bool transmitter = true;
 #else
