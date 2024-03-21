@@ -18,7 +18,7 @@
 #define SAMPLE_BUFFER_SIZE 1024
 
 // #ifdef TEST
-	bool receiver = true;
+	bool receiver = false;
 	bool transmitter = true;
 // #endif
 
@@ -160,7 +160,7 @@ void scanKeysFunction(bool* press_list, float* damp_list, uint8_t* TX_Message) {
 				// Handle semaphore acquisition failure
 			}
 			TX_Message[0] = 'P';
-			TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
+			TX_Message[2] = i + 1 + octave * 12; // Assign number of note played to 3rd entry in transmission
 		if(transmitter) {
 			xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 		}
@@ -181,7 +181,7 @@ void scanKeysFunction(bool* press_list, float* damp_list, uint8_t* TX_Message) {
 				// Handle semaphore acquisition failure
 			}
 			TX_Message[0] = 'R';
-      		TX_Message[2] = i;
+      		TX_Message[2] = i + 1 + octave * 12;
 		if(transmitter) {
 			xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 		}
@@ -259,7 +259,21 @@ void displayUpdateFunction(std::string* instru_list, std::string* damp_str, uint
 void CAN_RX_Function(uint8_t* local_RX) {
 	xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
 	rxMessage.receiveMessage(local_RX);
-	__atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
+	if(!transmitter){
+		for(int i = 0; i < 6;  i++){
+			if(i == 0 && local_RX[0] == 'P'){
+				tone_idx[0] = local_RX[2];
+			} else {
+				tone_idx[i] = 0;
+			}
+		}
+		if(local_RX[0] == 'P'){
+			nok = 1;
+		} else {
+			nok = 0;
+		}
+	}
+	// __atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
 }
 
 void CAN_TX_Function(uint8_t* msgOut) {
@@ -479,7 +493,7 @@ void setup() {
 	sampleTimer->attachInterrupt(doubleBufferISR);
 	sampleTimer->resume();
 
-	CAN_Init(true);
+	CAN_Init(receiver && transmitter);
   setCANFilter();
 	// setCANFilter(0x123,0x7ff);
   if(receiver){
@@ -528,36 +542,36 @@ void setup() {
 			&scanKeysHandle /* Pointer to store the task handle */
 		);
 
-    if(receiver){
-        xTaskCreate(
-        CAN_RX_Task,
-        "CAN_RX_Task",
-        64,
-        NULL,
-        1,
-        &CAN_RXHandle
-      );
-    }
-
     if(transmitter){
         xTaskCreate(
         CAN_TX_Task,
         "CAN_TX_Task",
-        64,
+        128,
         NULL,
         1,
         &CAN_TXHandle
       );
     }
 
-		xTaskCreate(
-        	doubleBufferTask,
-        	"doubleBuffer",
-        	256,
-        	NULL,
-        	2,
-        	&doubleBufferHandle
+	    if(receiver){
+			xTaskCreate(
+			CAN_RX_Task,
+			"CAN_RX_Task",
+			128,
+			NULL,
+			1,
+			&CAN_RXHandle
 		);
+
+		xTaskCreate(
+			doubleBufferTask,
+			"doubleBuffer",
+			256,
+			NULL,
+			2,
+			&doubleBufferHandle
+		);
+    }
 
 	#endif
 
