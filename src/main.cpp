@@ -16,9 +16,6 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
-#define RECEIVER
-#define TRANSMITTER
-
 #ifdef TRANSMITTER
 bool transmitter = true;
 #else
@@ -36,14 +33,14 @@ struct {
   int tone_idx[6];
   int nok;
   SemaphoreHandle_t mutex;
-} protectedGlobals;
+} protectedGlobals; // Protects variables being accessed by scanKeysTask, displayUpdateTask
 
 struct {
   uint32_t sampleBuffer0[SAMPLE_BUFFER_SIZE / 2];
   uint32_t sampleBuffer1[SAMPLE_BUFFER_SIZE / 2];
   volatile bool writeBuffer1 = false;
   SemaphoreHandle_t doubleBufferSemaphore;
-} doubleBuffer;
+} doubleBuffer; // Protects variables being accessed by doubleBufferTask
 
 Knob volumeKnob(8, 0, 1);
 Knob dampKnob(2, 0, 1);
@@ -74,7 +71,7 @@ void setOutMuxBit(const uint8_t bitIdx, const bool value) {
 }
 
 void setRow(uint8_t rowidx) {
-  std::bitset<3> Ridx = std::bitset<3>(rowidx);
+  std::bitset<3> Ridx = std::bitset<3>(rowidx); // This converts row index integer to row index bitset
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET); // REN_PIN
   delayMicroseconds(2);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, gpio_state[Ridx[0]]); // RA0_PIN
@@ -93,48 +90,50 @@ void CAN_RX_ISR(void) {
 
 void CAN_TX_ISR(void) { xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL); }
 
+// Define the function so that it can be called repeatedly in the threads
+// or called once when doing timing analysis or other non-looping tasks
 void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
-  for (int i = 0; i < 12; i++) {
-    setRow(i / 4); // Floor division
+  for (int i = 0; i < 12; i++) { // Iterate through all 12 keys to check for presses/releases
+    setRow(i / 4); // Floor division to onvert 0-12 to 0-2
     delayMicroseconds(3);
-    // 3 scnarios:
+    // 3 scenarios:
     // 1: A key was not presses before and is now being presses
-    if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
+    if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) { // Use GPIO pin read function to read pin outputs faster
       press_list[i] = true; // Set the "is-pressed" entry for that key to true
-      if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
+      if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) { // |This prevents mutex from waiting forever
         // Critical section
         // Perform operations inside the critical section
-        tone_idx[nok] = i + 1 + octave * 12;
+        tone_idx[nok] = i + 1 + octave * 12; // This contains the information of all the key positions, max. 6 keys
         nok++; // Increase the no. of key being presses
-        key = keystrings[i + octave * 12];
+        key = keystrings[i + octave * 12]; // Read the key symbols being pressed
         xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
       }
-      TX_Message[0] = 'P';
+      TX_Message[0] = 'P'; // Transmit a 'Press' symbol
       TX_Message[2] =
           i + 1 +
           octave *
               12; // Assign number of note played to 3rd entry in transmission
-      if (transmitter) {
+      if (transmitter) { // Transmit the key data just after key press
         xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
       }
     }
     // 2: A key was presses before and is now being released
     else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
-      press_list[i] = false; // Set the "is-pressed" entry for that key to true
+      press_list[i] = false; // Set the "is-pressed" entry for that key to false
       if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
         // Critical section
         // Perform operations inside the critical section
-        key = "";
+        key = ""; // Clear the key symbols
         int *p = std::find(std::begin(tone_idx), std::end(tone_idx),
-                           i + 1 + octave * 12);
-        int idx = std::distance(tone_idx, p);
-        tone_idx[idx] = 0;
+                           i + 1 + octave * 12); // Get absolute position of the key inside tone_idx
+        int idx = std::distance(tone_idx, p); // Calcualtes the index of the key using the position
+        tone_idx[idx] = 0; // Set the released key idx to 0 will address the 0 vector in period, Ts, resulting in 0 output amplitude
         nok--;
         xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
       }
-      TX_Message[0] = 'R';
-      TX_Message[2] = i + 1 + octave * 12;
-      if (transmitter) {
+      TX_Message[0] = 'R'; // Send 'Release' symbol
+      TX_Message[2] = i + 1 + octave * 12; // Send the key index being pressed
+      if (transmitter) { // Transmit the key data just after key release
         xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
       }
     }
@@ -142,7 +141,7 @@ void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
     // presses and is still being pressed Skip the key detetction for those keys
   }
 
-  setRow(3); // Select the knob row
+  setRow(3); // Select the knob row for damp (3rd) and volume (4th) knob
   delayMicroseconds(3);
 
   volumeKnob.updateRotation(
@@ -151,7 +150,7 @@ void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
   dampKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
                           std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
-  setRow(4);
+  setRow(4); // Select the row for instrument (2nd) and octave (1st) knobs
   delayMicroseconds(3);
   instrumentKnob.updateRotation(
       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
@@ -280,12 +279,12 @@ void doubleBufferFunction() {
 }
 
 void scanKeysTask(void *pvParameters) {
-  const TickType_t xFrequency = 20 / portTICK_PERIOD_MS;
+  const TickType_t xFrequency = 20 / portTICK_PERIOD_MS; // Set initiation interval to 20 ms
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  uint8_t TX_Message[8] = {0};
+  uint8_t TX_Message[8] = {0}; // Initialised transmission message
   TX_Message[1] = 4; // Octave to be changed later - try auto assigning this.
-  float damp_list[3] = {0.99995, 1, 0.9995};
-  bool press_list[12] = {false};
+  float damp_list[3] = {0.99995, 1, 0.9995}; // Contains the damp factors used by the doubleBUffer LUT reading
+  bool press_list[12] = {false}; // The array which contains the keys that have been pressed
 
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -486,23 +485,26 @@ void setup() {
 
 #endif
 
+// Conducts timing analysis if the 'TEST' building flag is defined
 #ifdef TEST
   std::cout << "" << std::endl;
   std::cout << "Hardware timing diagnosis started." << std::endl;
   std::cout << "" << std::endl;
-  HAL_Delay(1000);
+  HAL_Delay(1000); // Adds 1 sec delay
 
-  transmitter = false;
-  int tone_idx[6] = {0};
+  transmitter = false; // Need to set to false to enable transmission of signal
+  int tone_idx[6] = {0}; // Pre-define the varaibles used by the functions
 
-  uint32_t startTime0 = micros();
-  for (int iter = 0; iter < 32; iter++) {
+  // Time the doubleBuffer Task
+  uint32_t startTime0 = micros(); // Define start time
+  for (int iter = 0; iter < 32; iter++) { // Repeat for 32 iteration
     doubleBufferISR();
   }
-  uint32_t elapsed0 = (micros() - startTime0) / 32;
+  uint32_t elapsed0 = (micros() - startTime0) / 32; // Calculate the time elapsed and average out the execution time for the 32 executions
   std::cout << "Double buffer ISR task latent execution time: " << elapsed0
             << " microseconds" << std::endl;
 
+  // Time the doubleBuffer sampling ISR
   uint32_t startTime = micros();
   nok = 1;
   for (int iter = 0; iter < 32; iter++) {
@@ -512,6 +514,7 @@ void setup() {
   std::cout << "Double buffer task latent execution time: " << elapsed1
             << " microseconds" << std::endl;
 
+  // Time the scan keys task
   float damp_list[3] = {0.99995, 1, 0.9995};
   bool press_list[12] = {false};
   uint8_t TX_Message[8] = {0};
@@ -523,18 +526,20 @@ void setup() {
   std::cout << "Key scanning task latent execution time: " << elapsed2
             << " microseconds" << std::endl;
 
+  // Time the display update task
   std::string damp_str[3] = {"Normal", "Sustain", "Overdamp"};
   std::string instru_list[3] = {"sawtooth", "sine", "piano"};
   uint32_t ID;
   uint8_t localRX[8];
   startTime = micros();
   for (int iter = 0; iter < 32; iter++) {
-    displayUpdateFunction(instru_list, damp_str, ID, localRX);
+    displayUpdateFunction(instru_list, damp_str, ID);
   }
   uint32_t elapsed3 = (micros() - startTime) / 32 + 1000;
   std::cout << "Display update task latent execution time: " << elapsed3
             << " microseconds" << std::endl;
 
+  // Time the CAN_TX task
   uint8_t msgOut[8] = {1, 2, 3, 4, 5, 6, 7, 8};
   startTime = micros();
   xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
@@ -544,12 +549,15 @@ void setup() {
   std::cout << "Data transmission task latent execution time: " << elapsed4
             << " microseconds" << std::endl;
 
+  // Time the CAN_RX task
   uint8_t local_RX[8] = {1, 2, 3, 4, 5, 6, 7, 8};
   startTime = micros();
   xQueueSend(msgInQ, local_RX, portMAX_DELAY);
   xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
-  rxMessage.receiveMessage(local_RX);
-  if (!transmitter) {
+  if (!transmitter || xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
+    // Critical section
+    // Perform operations inside the critical section
+
     for (int i = 0; i < 6; i++) {
       if (i == 0 && local_RX[0] == 'P') {
         tone_idx[0] = local_RX[2];
@@ -563,25 +571,29 @@ void setup() {
       nok = 0;
     }
   }
-  __atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
   uint32_t elapsed5 = (micros() - startTime) * 36 + 1000;
   std::cout << "Data receiving task latent execution time: " << elapsed5
             << " microseconds" << std::endl;
 
-  uint32_t total_elapsed = micros() - startTime0;
-  std::cout << "Total execution time: " << total_elapsed << " microseconds"
+  // Calculate the total execution time of all tasks
+  std::cout << "Total execution time: " << elapsed0 + elapsed1 + elapsed2 + elapsed3 + elapsed4 + elapsed5 << " microseconds"
             << std::endl;
+
+  // Calculate CPU utilisation
   uint32_t utilisation =
       (elapsed0 / 46. + elapsed1 / 17000. + elapsed2 / 20000. +
        elapsed3 / 100000. + elapsed4 / 60000. + elapsed5 / 25200.) *
       100;
+  // Conducts cirtial-instant-analysis
+  uint32_t CIA = (elapsed0 * 100. / 46. + elapsed1 * 100. / 17000. + elapsed2 * 100. / 20000. + elapsed4 * 100. / 60000. + elapsed5 * 100. / 25200.);
 
   std::cout << "" << std::endl;
+  std::cout << "CIA analysis: " << std::to_string(CIA) << " % " << "of 100ms." << std::endl;
   std::cout << "CPU utilisation: " << std::to_string(utilisation) << "%"
             << std::endl;
   std::cout << "" << std::endl;
   std::cout << "Hardware diagnosis complete." << std::endl;
-  while (1);
+  while (1); // The test code will stops here
 #endif
 
   CAN_TX_Semaphore = xSemaphoreCreateCounting(3, 3);
