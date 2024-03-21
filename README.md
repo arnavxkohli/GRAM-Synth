@@ -1,10 +1,16 @@
 # GRAM's Music Synthesizer
 
 # Table of Contents
-1. [Key Press Detection](##Key_press_detection)
+1. [Key Press Detection](##Key-press-detection)
 2. [Display](##Display)
-3. [Third Example](#third-example)
-4. [Fourth Example](#fourth-examplehttpwwwfourthexamplecom)
+3. [User Interface](#User-interface)
+4. [Instrument Waveform Generation](#Instrument-waveform-generation)
+5. [Audio](##Audio)
+6. [DAC with DMA](#DAC-with-DMA)
+7. [Communication](#Communication)
+8. [Timing Analysis](#Timing-analysis)
+9. [Methods used to guarantee safe access and synchronization](#Methods-used-to-guarantee-safe-access-and-synchronization)
+10. [Inter-Task Dependencies](#Inter-Task-Dependencies)
 
 ## Key press detection
   ### Basic key scanning
@@ -79,7 +85,7 @@
 
 ## Display
   ### Description
-  It is a thread with priority 1 as it has the longest initiation interval of 100ms. This function is responsible for calling repeatedly displayUpdateFunction for displaying on the OLED display screen: which note is selected, if a key is pressed or released and the knobs rotation (volume, decay, in which octave it is, instrument selection). 
+  It is a thread with priority 1 as it has the longest initiation interval of 100ms. This function is responsible for calling repeatedly displayUpdateFunction for displaying on the OLED display screen: which note is selected, if a key is pressed or released (It will be shown using its musical symbol, e.g. C1, D2# where the number after the letter indicates the octave), the current selected instrument, the current selected octave (1 - 6) and the current damping strength (normal, undamped or overdamped).
   ### Code analysis
   The task is implemented as a FreeRTOS task using xTaskCreate. It has a period of 100ms as specified by xFrequency. It retrieves the task handle to manage task operations. The displayUpdateFunction is called within this task to update the OLED display content. The OLED display update involves clearing the buffer, drawing text and graphics, and sending the buffer to the display.
 ## User interface
@@ -87,7 +93,7 @@ The main control interface of the system is via the 4 knobs on the keyboard. The
 - Volume (12 levels possible)
 - Decay (3 modes)
 - Instrument (3 instruments)
-- Octave ()
+- Octave (3 octaves)
 
 ![](images/display.png)
 
@@ -121,17 +127,17 @@ To improve detection resolution, the indeterminant states of the knob rotation i
   Inside the double buffer writing task, Vout is calculated by reading the entries in waveform_lut by indexing with instru, tone_idx, t and Ts. The summed amplitude from multiple frequencies will be divided by the number of keys (nok) to ensure it’s between 0 and 4095. The first dimension of the lut contains all the stored instrument samples playable. The second dimension contains all the sound samples of all the frequencies of that instrument. And the last dimension contains the amplitude samples of a single period waveform of a particular frequency. Since the vector size is finite and it is required to loop through every samples of a period, we cannot let the timer t to increase indefinitely. Instead, we used the remainder `t % Ts[tone_idx[i]]` to access an entire period repeatedly. `uint16_t Ts[37]` stores the 36 periods plus a idle period and the `tone_idx` is used to access which periods are present.
   
   ### Memory optimisation
-  One issue with using a lut is that it taken up a significant amount of static memory in the CPU. This may not be a problem for commercial synthesizers as they tend to have more storage available. However, for our lab ketboard, it is crucial to optimise the memory usage.
+  One issue with using a lut is that it can take up a significant amount of static memory in the CPU. This may not be a problem for commercial synthesizers as they tend to have more storage available. However, for our lab keyboard, it is crucial to optimise the memory usage.
   
   The traditional method of incoporating a waveform LUT into `SampleISR` involves storing the amplitudes of a single period for all possible frequencies for all instruments. This quickly get inefficient as there can be as many as 96 frequencies hence $instruments \times 96 \times T$ entries in total. Let's say a commercially viable synthesizer needs 50 different instruments and the average period length contains around 466 entries, then there will be $50 \times 96 \times 466 = 2236800$ entries or 8.95 MB if using 32 bits entries (A STM32 processor typically has 2 MB of flash memory)!
   
   To optimise the LUT storage, we use the undersampling technique. This method involves delibrately causing favourble aliasing effect by not sampling all the entries of a period. First, it is needed to define a base waveform which has the lowest frequency (such as C0) and the most entries in a single period. Then, to obtain all other frequencies higher than the base frequency, we'll only need to sample the base waveform at intervals greater than 1. For a base waveform with period $T_0 = N$ entries and we want to sample it at $T_1 = n$ entries, the formula below gives the desirable sampling interval:
   $$t_s = (t * \frac{N}{n}) \space mod \space N, \space n \le N$$
-  Where t is the base timer that increment by 1 for every sample iteration. This increases the memeory efficient by a factor of 96 as only 1 out of 96 freqeuncies is needed to output all other frequencies. The 3-dimensional LUT is now 2-dimensional:
+  Where t is the base timer that increment by 1 for every sample iteration. This increases the memeory efficient by a factor of 96 as only 1 out of 96 freqeuncies is needed to output all other frequencies. The 3-dimensional LUT is now 2-dimensional and uses only 8 bit output as we're setting audio resolution to 8-bit:
   
 `std::vector<std::vector<uint8_t>> waveform_lut;`
   
-  ![](6.png)
+  ![](images/6.png)
 
 ## Audio
   ### Instrument LUT in SampleISR()
@@ -182,8 +188,9 @@ Vout = (waveform_luts[instru][tone_idx[0]][idx[0]] * decay[0] +
         waveform_luts[instru][tone_idx[2]][idx[2]] * decay[2] +
         ...    
 ```
-The temporary variable `idx` will change depending on whether the function is instruemnt or beat. In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
-  Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would result in additional variables being created to detect whether a received instruction demands a beat to be generated since this would add workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
+The temporary variable `idx` will change depending on whether the function is instruemnt or beat. In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone; whereas for the normal instrument section, `t` will increase till it reaches the end of one period.\
+  Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would result in additional variables being created to detect whether a received instruction demands a beat to be generated since this would add workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.\
+  **However, due to the workload of beat function out weighing it's benefit, we did not include beat section in the final code.** Also, ideally the beat should keep playing continuously in the background rather than being pressed by the user.
 
   ### Double buffer
   
@@ -275,7 +282,7 @@ Communication was implemented in two phases: receiving and transmitting. To deno
 The `transmitter` and `receiver` booleans are global variables but do not need to be declared as `volatile` or be protected by a semaphore. Since these are convenience variables part of the configuration options of the keyboard, their value will never change and in face the compiler will ensure that it is cached to increase execution speed if compiled with the `-O3` (all optimizations on) flag.
 ### Receiving messages
 Initially, to implement receiving messages from one keyboard to the other, the `CAN_RX()` method was used, which would poll for messages which was inefficient because messages could be missed in the display thread. To counter this:
-- A message queue of size 36 was implemented, storing 8 byte arrays (unsigned integers). The queue is a FIFO (first in first out) data structure. A more comprehensive analysis of the queue's functionality can be found in the inter task dependencies section below.
+- A message queue of size 36 was implemented, storing 8 byte arrays (unsigned integers). The queue is a FIFO (first in first out) data structure. A more comprehensive analysis of the queue's functionality can be found [below](#Inter-Task-Dependencies).
 - An interrupt `CAN_RX_ISR` would then move the incoming message into the queue (one at a time). This is effective because there is no longer a strong possibility of missing multiple messages. This also improves the separation of concerns between tasks, and improves the speed of message processing because messages no longer have to wait in transit, and the moment a message is received the RTOS interrupts to put it onto the queue. The ISR was initialized with the `CAN_Register_ISR` similar to the ISR for the transmission task.
 - The bulk of the message processing was done by the `CAN_RX_Task`. As mentioned in the previous sections, playing a note on the receiver was dependent on the `doubleBufferTask` (`nok` and `tone_idx`). If the keyboard was in loopback mode, this task is redundant and does nothing (but is still needed to receive and transmit messages to itself).\
 Messages were not displayed on the display and there was no merit in declaring the variables associated with receiving messages as globals.
@@ -285,13 +292,13 @@ Similar to receiving messages, transmitting messages depended on the polling fun
 - A thread, `CAN_TX_Task`, which would take a message sent by `scanKeysTask` whenever a 'P' or 'R' event occured and put these onto the transmit queue.
 - An interrupt `CAN_TX_ISR`. This interrupt would give the semaphore when a mailbox is available. After all 3 slots were filled, it would block until after at least one was empty (hence a ternary counting semaphore). Due to this, a transmitting keyboard would not be able to play sounds on its own (without being connected to a receiving keyboard).
 
-|Mode| Active Tasks|
+|Mode| Active Tasks/Activities|
 |---|---|
 |`RECEIVER`|`CAN_RX_Task`, `doubleBufferTask`, `CAN_RX_ISR`, overwriting `nok` & `tone_idx`|
-|`TRANSMITTER`||
-|`LOOPBACK`||
+|`TRANSMITTER`|`CAN_TX_Task`, `CAN_TX_ISR`, `scanKeysTask`'s transmission of keys|
+|`LOOPBACK`|All tasks, but `CAN_RX_Task` will not overwrite anything.|
 
-Videos showing the various modes can be found in the `videos/` folder of this repository.
+Two videos showing the `RECEIVER` and `TRANSMITTER` modes in action can be found in `videos/` in this repository.
 ## Timing analysis
 To imeplement timing analysis of each task, we must let each task to run only once. To do this, we defined a `XXXFunction()` which is called repeatedly in a `XXXTask()`:
 ```
@@ -337,5 +344,5 @@ Semaphores are acquired with a timeout `portMAX_DELAY` to prevent deadlock situa
  ### Separation of Concerns:
   `Knob` encapsulates its data and methods, promoting modular and structured code design.
 ## Inter-Task Dependencies
-![](images/dependency-graph.jpeg)
-Above is a graphical illustration of our musical synthesiser program, each Task and ISR is represented by round rectangles and each dependecy is represented by an arrow. We can see starting from `scanKeysTask()` the `keys.mutex` dependecy is shared by both the `displayUpdate()` task and the `doubleBufferTask()`, this is acceptable as the mutex is thread-safe and would be unlocked before a task is finished. the `doubleBufferTask()` thread and the `doubleBufferISR()` both make use of the `doubleBuffer.sempahore` when writing and reading from the double buffer however this operation is deadlock free as `doubleBufferTask()` captures the semaphore during the sample generation and the ISR releases agin when it has finished swapping the pointers, the semaphore is also released once during the setup phase as to not block the first loop. When the board is setup in transmitter mode, a message queue is generated, whereby the 'scanKeysTask()` will send the 'msgOutQ` and the `CAN_TX_Task()` will receive it; The synchronisation of the `CAN_TX_Task()` is dictated by the `CAN_TX_Semaphore` which acts as a counting semaphore and essentially controls access to the CAN transmission process, this will not cause deadlock as the `CAN_TX_Semaphore` is taken when the thread wants exclusive access before sending a message and released onec the ISR has queued a message for transmission. If reciever mode is enabled, The `CAN_RX_ISR` is responsible to receive the CAN transmission and send the message queue via `msgInQ`, this is then in turn received by the the `CAN_RX_Task()`, decoupling the CAN reception allows them to operate independetly and ensure efficient message handling even under heavier loads, deadlock is prevented as the ISR is off-loaded, resulting in timely execution without the risk of delaying or blocking critical operations.
+![](images/dependency-graph.jpeg)\
+Above is a graphical illustration of our musical synthesiser program, each Task and ISR is represented by round rectangles and each dependecy is represented by an arrow. We can see starting from `scanKeysTask()` the `keys.mutex` dependecy is shared by both the `displayUpdate()` task and the `doubleBufferTask()`, this is acceptable as the mutex is thread-safe and would be unlocked before a task is finished. the `doubleBufferTask()` thread and the `doubleBufferISR()` both make use of the `doubleBuffer.sempahore` when writing and reading from the double buffer however this operation is deadlock free as `doubleBufferTask()` captures the semaphore during the sample generation and the ISR releases agin when it has finished swapping the pointers, the semaphore is also released once during the setup phase as to not block the first loop. When the board is setup in transmitter mode, a message queue is generated, whereby the `scanKeysTask()` will send the `msgOutQ` and the `CAN_TX_Task()` will receive it; The synchronisation of the `CAN_TX_Task()` is dictated by the `CAN_TX_Semaphore` which acts as a counting semaphore and essentially controls access to the CAN transmission process, this will not cause deadlock as the `CAN_TX_Semaphore` is taken when the thread wants exclusive access before sending a message and released onec the ISR has queued a message for transmission. If reciever mode is enabled, The `CAN_RX_ISR` is responsible to receive the CAN transmission and send the message queue via `msgInQ`, this is then in turn received by the the `CAN_RX_Task()`, decoupling the CAN reception allows them to operate independetly and ensure efficient message handling even under heavier loads, deadlock is prevented as the ISR is off-loaded, resulting in timely execution without the risk of delaying or blocking critical operations.
