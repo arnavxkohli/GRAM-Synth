@@ -1,7 +1,30 @@
 # GRAM's Music Synthesizer
+
+# Table of Contents
+1. [Key Press Detection](##Key_press_detection)
+2. [Display](##Display)
+3. [Third Example](#third-example)
+4. [Fourth Example](#fourth-examplehttpwwwfourthexamplecom)
+
 ## Key press detection
   ### Basic key scanning
-  First, the `digitalRead(GPIOA, col)` functions are replaced by `!HAL_GPIO_ReadPin()` to increase execution speed. The input to `col` is a array of length 4 defined as `uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};`.
+  First, we define a function that is used to address the decoder multiplexer of the key matrix.
+  ```c++
+  void setRow(uint8_t rowidx) {
+  ...
+}
+  ```
+  The input to the function is an integer which selects each bit of input to the multiplexer. This integer is then converted to a bit stream to seperate each bits:
+  ```
+  ...
+  std::bitset<3> Ridx = std::bitset<3>(rowidx);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, gpio_state[Ridx[0]]); // RA0_PIN
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, gpio_state[Ridx[1]]); // RA1_PIN
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, gpio_state[Ridx[2]]); // RA2_PIN
+  ...
+  ```
+  The `digitalRead()` functions are replaced by `!HAL_GPIO_ReadPin()` to increase execution speed. The `gpio_state[2]` array stores the `enum GPIO_Pinstate` data type that is used to output HIGH or LOW signals to the GPIO pins.\
+  Then in `scanKeysTask`, `digitalRead(GPIOA, col)` is replaced by `HAL_GPIO_ReadPin(GPIOA, col)` instead. The input to `col` is a array of length 4 defined as `uint32_t key_cols[4] = {GPIO_PIN_3, GPIO_PIN_8, GPIO_PIN_7, GPIO_PIN_9};`.
   Then, a for loop of 12 iterations is used to loop through the 12 keys.
   ```c++
   for (int i = 0; i < 12; i++) {
@@ -139,7 +162,25 @@ The difference between the waveform sound and a beat sound is that a waveform is
   ![A beat is non-periodic](5.png)
   
 First, for `instru` option of 0-2, we assign them to be waveform generating and the remaining `instru = 3 or 4` to be the beats. If `instru` is greater than 2, we enter the beat generating section.
-In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
+```
+if (instru <= 2) {
+    idx[0] = t % Ts[tone_idx[0]];
+    idx[1] = t % Ts[tone_idx[1]];
+    idx[2] = t % Ts[tone_idx[2]];
+    ...
+}
+else {
+    idx[0] = std::min(t, Ts[tone_idx[0]] * 5 - 1);
+    idx[1] = std::min(t, Ts[tone_idx[1]] * 5 - 1);
+    idx[2] = std::min(t, Ts[tone_idx[2]] * 5 - 1);
+    ...
+}
+Vout = (waveform_luts[instru][tone_idx[0]][idx[0]] * decay[0] +
+        waveform_luts[instru][tone_idx[1]][idx[1]] * decay[1] +
+        waveform_luts[instru][tone_idx[2]][idx[2]] * decay[2] +
+        ...    
+```
+The temporary variable `idx` will change depending on whether the function is instruemnt or beat. In the beat generating section, the entries stored in waveform_lut must only repeat for 1 period then stop. To do this, the timer variable t is clipped at the maximum period length of a particular key tone.
   Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would result in additional variables being created to detect whether a received instruction demands a beat to be generated since this would add workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
 
   ### Double buffer
@@ -220,6 +261,33 @@ In the beat generating section, the entries stored in waveform_lut must only rep
 
 
 ## Communication
+Communication was implemented in two phases: receiving and transmitting. To denote which mode the keyboard is in, the following build flags were used:
+- `RECEIVER`: The keyboard is in receive mode. It will receive the tone of the note to be played with the octave already a part of it. There is no cross keyboard polyphony, so the keyboard would only play one note at a time. A 'P' message would initiate the playing of the note and an 'R' message would stop the note from being played. The `tone_idx` and the `nok` (signifying the number of keys) would be overwritten only if the keyboard is not in `LOOPBACK` mode (it would then be considered a transmitter and receiver). These values are then used by the `doubleBufferTask` to play the given note.
+- `TRANSMITTER`: The keyboard is in transmit mode. It will transmit a message from the `scanKeysTask` which would determine which note needs to be played. Similar to key scanning, the tone index would be calculated with the help of the octave and the note played, and sent to as a message along with a 'P' if the note was pressed or 'R' if it was released.
+- `LOOPBACK`: The keyboard is in loopback mode. It will receive messages sent to itself. Since there is no real purpose of processing  a message received from itself, processing is disabled with a guard clause:
+    ```c++
+    if (!transmitter || xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
+    ```
+    The guard clause also checks if the semaphore     protecting all of the global variables shared across     threads is available to be acquired.
+
+The `transmitter` and `receiver` booleans are global variables but do not need to be declared as `volatile` or be protected by a semaphore. Since these are convenience variables part of the configuration options of the keyboard, their value will never change and in face the compiler will ensure that it is cached to increase execution speed if compiled with the `-O3` (all optimizations on) flag.
+### Receiving messages
+Initially, to implement receiving messages from one keyboard to the other, the `CAN_RX()` method was used, which would poll for messages which was inefficient because messages could be missed in the display thread. To counter this:
+- A message queue of size 36 was implemented, storing 8 byte arrays (unsigned integers). The queue is a FIFO (first in first out) data structure. A more comprehensive analysis of the queue's functionality can be found in the inter task dependencies section below.
+- An interrupt `CAN_RX_ISR` would then move the incoming message into the queue (one at a time). This is effective because there is no longer a strong possibility of missing multiple messages. This also improves the separation of concerns between tasks, and improves the speed of message processing because messages no longer have to wait in transit, and the moment a message is received the RTOS interrupts to put it onto the queue. The ISR was initialized with the `CAN_Register_ISR` similar to the ISR for the transmission task.
+- The bulk of the message processing was done by the `CAN_RX_Task`. As mentioned in the previous sections, playing a note on the receiver was dependent on the `doubleBufferTask` (`nok` and `tone_idx`). If the keyboard was in loopback mode, this task is redundant and does nothing (but is still needed to receive and transmit messages to itself).\
+Messages were not displayed on the display and there was no merit in declaring the variables associated with receiving messages as globals.
+### Transmitting messages
+Similar to receiving messages, transmitting messages depended on the polling function `CAN_TX` which without optimization, could miss messages. A similar solution to the receive queue was devised where messages were fed to it the moment they were available. The `scanKeysTask` held the responsibility of putting messages onto the queue when a key is pressed or released as stated previously. Since the CAN bus on the STM32 has three mailbox slots for outgoing messages, using a counting semaphore to guard this resource was the best option. This was achieved using:
+- A message queue with the same structure as the receive queue.
+- A thread, `CAN_TX_Task`, which would take a message sent by `scanKeysTask` whenever a 'P' or 'R' event occured and put these onto the transmit queue.
+- An interrupt `CAN_TX_ISR`. This interrupt would give the semaphore when a mailbox is available. After all 3 slots were filled, it would block until after at least one was empty (hence a ternary counting semaphore). Due to this, a transmitting keyboard would not be able to play sounds on its own (without being connected to a receiving keyboard).
+
+|Mode| Active Tasks|
+|---|---|
+|`RECEIVER`|`CAN_RX_Task`, `doubleBufferTask`, `CAN_RX_ISR`, overwriting `nok` & `tone_idx`|
+|`TRANSMITTER`||
+|`LOOPBACK`||
 ## Timing analysis
 To imeplement timing analysis of each task, we must let each task to run only once. To do this, we defined a `XXXFunction()` which is called repeatedly in a `XXXTask()`:
 ```
@@ -229,7 +297,7 @@ void XXXTask(void * parameters) {
   }
 ```
 This enables both indefinite and single execution of any task.
-The table below summarised all the tasks with their priority and timing constrains when operating under worst-case-scenario with STM32 scheduler tick being taken into account:
+The table below summarised all the tasks with their priority and timing constrains when operating under worst-case-scenario with STM32 scheduler tick delay being taken into account:
 | Task name | initiation int. | latent execution time | priority|
 | --- | --- | --- | --- |
 | display | 100ms | 17.64ms | 1 |
@@ -237,20 +305,25 @@ The table below summarised all the tasks with their priority and timing constrai
 | DoubleBuffer | 17ms | 3.035ms | 5 |
 | DoubleBuffer ISR | 0.045ms | 0.009ms | interrupt |
 | Data transmission | 60ms | 1.504ms | 2 |
-| Data decoding | 25.2ms | 1.684ms | 3 |
+| Data decoding | 25.2ms | 1.324ms | 3 |
 
 The system's critical instant, $t_c$ must be less than the longest initiation interval, $\tau_n$ amoung the tasks. In this case, $\tau_n = 100ms$. The critical instant is calculated using:
 $$t_c = \sum_{k=1}^n \frac{\tau_n}{\tau_k}T_k$$
-Where $T_k$ is the latent execution time of each task. Based on the formula, the critical instant of our system is found to be 53.04ms, which is well below 100ms. The percentage CPU utilisation is given by:
+Where $T_k$ is the latent execution time of each task. Based on the formula, the critical instant of our system is found to be 52.05ms, which is well below 100ms. The percentage CPU utilisation is given by:
 
 $$U_T = \sum_{k=1}^n \frac{T_k}{\tau_k}$$
 
 Hence the percentage utilisation was found to be:
 
-$(\frac{17.64}{100} + \frac{1.287}{20} + \frac{3.035}{17} + \frac{0.009}{0.045} + \frac{1.504}{60} + \frac{1.684}{25.2}) \times 100 = 71$ %.
+$(\frac{17.64}{100} + \frac{1.287}{20} + \frac{3.035}{17} + \frac{0.009}{0.045} + \frac{1.504}{60} + \frac{1.324}{25.2}) \times 100 = 68$ %.
 ## Methods used to guarantee safe access and synchronization:
   ### Semaphore-Based Mutex for critical Sections:
-  In `Knob.cpp`, a semaphore-based mutex is employed to protect critical sections of code (RAII) where shared data is accessed or modified. The `xSemaphoreTake()` and `xSemaphoreGive()` functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (`rotation`, `rotationISR`) during updates or reads.
+  In `Knob.cpp`, a semaphore-based mutex is employed to protect critical sections of code (RAII) where shared data is accessed or modified. The `xSemaphoreTake()` and `xSemaphoreGive()` functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (`rotation`, `rotationISR`) during updates or reads.\
+  The table below shows the variables that are accessed by multiple threads:
+  | Variable name | Accessed by |
+  | --- | --- |
+  | `tone_idx[6]` | `scanKeysTask`, `doubleBufferTask`, `CAN_RX_TASK` |
+  | `nok` | `scanKeysTask`, `doubleBufferTask`, `CAN_RX_TASK` |
  ### Mutex Initialization:
 `Knob` initializes its mutex in its constructor (derived from parent `sysState.h`) using `xSemaphoreCreateMutex()``.
  ### Semaphore Timeouts:
@@ -259,7 +332,6 @@ Semaphores are acquired with a timeout `portMAX_DELAY` to prevent deadlock situa
   In Knob.cpp, atomic load and store operations `__atomic_load_n()` are used to safely access the `rotationISR` variable without the need for explicit mutex locking.
  ### Separation of Concerns:
   `Knob` encapsulates its data and methods, promoting modular and structured code design.
-  ### Queue:
 ## Inter-Task Dependencies
 ![ESCW2_dependency_graph](https://hackmd.io/_uploads/H1pJZW50T.png)
-Above is a graphical illustration of our musical synthesiser program, each Task and ISR is represented by round rectangles and each dependecy is represented by an arrow. We can see starting from `scanKeysTask()` the `keys.mutex` dependecy is shared by both the `displayUpdate()` task and the `doubleBufferTask()`, this is acceptable as the mutex is thread-safe and would be unlocked before a task is finished. the `doubleBufferTask()` thread and the `doubleBufferISR()` both make use of the doubleBuffer.sempahore when writing and reading from the double buffer however this operation is deadlock free as `doubleBufferTask()` captures the semaphore during the sample generation and the ISR releases agin when it has finished swapping the pointers, the semaphore is also released once during the setup phase as to not block the first loop. 
+Above is a graphical illustration of our musical synthesiser program, each Task and ISR is represented by round rectangles and each dependecy is represented by an arrow. We can see starting from `scanKeysTask()` the `keys.mutex` dependecy is shared by both the `displayUpdate()` task and the `doubleBufferTask()`, this is acceptable as the mutex is thread-safe and would be unlocked before a task is finished. the `doubleBufferTask()` thread and the `doubleBufferISR()` both make use of the `doubleBuffer.sempahore` when writing and reading from the double buffer however this operation is deadlock free as `doubleBufferTask()` captures the semaphore during the sample generation and the ISR releases agin when it has finished swapping the pointers, the semaphore is also released once during the setup phase as to not block the first loop. When the board is setup in transmitter mode, a message queue is generated, whereby the 'scanKeysTask()` will send the 'msgOutQ` and the `CAN_TX_Task()` will receive it; The synchronisation of the `CAN_TX_Task()` is dictated by the `CAN_TX_Semaphore` which acts as a counting semaphore and essentially controls access to the CAN transmission process, this will not cause deadlock as the `CAN_TX_Semaphore` is taken when the thread wants exclusive access before sending a message and released onec the ISR has queued a message for transmission. If reciever mode is enabled, The `CAN_RX_ISR` is responsible to receive the CAN transmission and send the message queue via `msgInQ`, this is then in turn received by the the `CAN_RX_Task()`, decoupling the CAN reception allows them to operate independetly and ensure efficient message handling even under heavier loads, deadlock is prevented as the ISR is off-loaded, resulting in timely execution without the risk of delaying or blocking critical operations.
