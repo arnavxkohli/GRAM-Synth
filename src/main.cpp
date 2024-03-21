@@ -16,6 +16,9 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
+#define RECEIVER
+#define TRANSMITTER
+
 #ifdef TRANSMITTER
 bool transmitter = true;
 #else
@@ -33,7 +36,7 @@ struct {
   int tone_idx[6];
   int nok;
   SemaphoreHandle_t mutex;
-} scanKeys;
+} protectedGlobals;
 
 struct {
   uint32_t sampleBuffer0[SAMPLE_BUFFER_SIZE / 2];
@@ -45,7 +48,7 @@ struct {
 Knob volumeKnob(8, 0, 1);
 Knob dampKnob(2, 0, 1);
 Knob instrumentKnob(2, 0, 1);
-Knob octaveKnob(5, 0, 1);
+Knob octaveKnob(4, 2, 1);
 
 QueueHandle_t msgInQ;
 QueueHandle_t msgOutQ;
@@ -98,13 +101,13 @@ void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
     // 1: A key was not presses before and is now being presses
     if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
       press_list[i] = true; // Set the "is-pressed" entry for that key to true
-      if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+      if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
         // Critical section
         // Perform operations inside the critical section
         tone_idx[nok] = i + 1 + octave * 12;
         nok++; // Increase the no. of key being presses
         key = keystrings[i + octave * 12];
-        xSemaphoreGive(scanKeys.mutex); // Release the mutex
+        xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
       }
       TX_Message[0] = 'P';
       TX_Message[2] =
@@ -118,7 +121,7 @@ void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
     // 2: A key was presses before and is now being released
     else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
       press_list[i] = false; // Set the "is-pressed" entry for that key to true
-      if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+      if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
         // Critical section
         // Perform operations inside the critical section
         key = "";
@@ -127,7 +130,7 @@ void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
         int idx = std::distance(tone_idx, p);
         tone_idx[idx] = 0;
         nok--;
-        xSemaphoreGive(scanKeys.mutex); // Release the mutex
+        xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
       }
       TX_Message[0] = 'R';
       TX_Message[2] = i + 1 + octave * 12;
@@ -157,18 +160,18 @@ void scanKeysFunction(bool *press_list, float *damp_list, uint8_t *TX_Message) {
       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
       std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
-  if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+  if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
     // Critical section
     // Perform operations inside the critical section
     instru = instrumentKnob.getRotationISR();
     damp_factor = damp_list[dampKnob.getRotationISR()];
     octave = octaveKnob.getRotationISR();
-    xSemaphoreGive(scanKeys.mutex); // Release the mutex
+    xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
   }
 }
 
 void displayUpdateFunction(std::string *instru_list, std::string *damp_str,
-                           uint32_t ID, uint8_t *localRX) {
+                           uint32_t ID) {
   // Update display
   u8g2.clearBuffer(); // clear the internal memory
 
@@ -183,11 +186,11 @@ void displayUpdateFunction(std::string *instru_list, std::string *damp_str,
   u8g2.drawStr(60, 20, octave_str.c_str());
   u8g2.drawStr(60, 30, damp_str[dampKnob.getRotation()].c_str());
 
-  if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+  if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
     // Critical section
     // Perform operations inside the critical section
     u8g2.drawStr(2, 10, key);
-    xSemaphoreGive(scanKeys.mutex); // Release the mutex
+    xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
   }
 
   u8g2.sendBuffer(); // transfer internal memory to the display
@@ -199,7 +202,7 @@ void displayUpdateFunction(std::string *instru_list, std::string *damp_str,
 void CAN_RX_Function(uint8_t *local_RX) {
   xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
 
-  if (!transmitter || xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+  if (!transmitter || xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
     // Critical section
     // Perform operations inside the critical section
 
@@ -216,7 +219,7 @@ void CAN_RX_Function(uint8_t *local_RX) {
       nok = 0;
     }
 
-    xSemaphoreGive(scanKeys.mutex);
+    xSemaphoreGive(protectedGlobals.mutex);
   }
 }
 
@@ -294,13 +297,12 @@ void displayUpdateTask(void *pvParameters) {
   const TickType_t xFrequency = 100 / portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
   uint32_t ID;
-  uint8_t localRX[8];
   std::string damp_str[3] = {"Normal", "Sustain", "Overdamp"};
   std::string instru_list[3] = {"sawtooth", "sine", "piano"};
 
   while (1) {
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
-    displayUpdateFunction(instru_list, damp_str, ID, localRX);
+    displayUpdateFunction(instru_list, damp_str, ID);
   }
 }
 
@@ -347,11 +349,11 @@ void doubleBufferTask(void *pvParameters) {
 
   while (1) {
     xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
-    if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(protectedGlobals.mutex, portMAX_DELAY) == pdTRUE) {
       // Critical section
       // Perform operations inside the critical section
       doubleBufferFunction();
-      xSemaphoreGive(scanKeys.mutex); // Release the mutex
+      xSemaphoreGive(protectedGlobals.mutex); // Release the mutex
     }
   }
 }
@@ -442,7 +444,7 @@ void setup() {
   TaskHandle_t doubleBufferHandle = NULL;
   TaskHandle_t dacInitializationHandle = NULL;
 
-  scanKeys.mutex = xSemaphoreCreateMutex();
+  protectedGlobals.mutex = xSemaphoreCreateMutex();
 
 #ifndef TEST_SCANKEYS
 
