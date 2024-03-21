@@ -17,9 +17,24 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
-// #ifdef TEST
-	bool receiver = true;
+#define RECEIVER
+
+#ifdef TRANSMITTER
 	bool transmitter = true;
+#else
+	bool transmitter = false;
+#endif
+
+#ifdef RECEIVER
+	bool receiver = true;
+#else
+	bool receiver = false;
+#endif
+
+
+// #ifdef TEST
+	// bool receiver = true;
+	// bool transmitter = true;
 // #endif
 
 //DAC_HandleTypeDef hdac;
