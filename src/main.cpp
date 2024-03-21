@@ -538,7 +538,7 @@ void setup() {
 			"scanKeys",		/* Text name for the task */
 			256,      		/* Stack size in words, not bytes */
 			NULL,			/* Parameter passed into the task */
-			3,			/* Task priority */
+			4,			/* Task priority */
 			&scanKeysHandle /* Pointer to store the task handle */
 		);
 
@@ -548,7 +548,7 @@ void setup() {
         "CAN_TX_Task",
         128,
         NULL,
-        1,
+        2,
         &CAN_TXHandle
       );
     }
@@ -559,7 +559,7 @@ void setup() {
 			"CAN_RX_Task",
 			128,
 			NULL,
-			1,
+			3,
 			&CAN_RXHandle
 		);
 
@@ -568,7 +568,7 @@ void setup() {
 			"doubleBuffer",
 			256,
 			NULL,
-			2,
+			5,
 			&doubleBufferHandle
 		);
     }
@@ -581,44 +581,51 @@ void setup() {
 		std::cout << "" << std::endl;
 		HAL_Delay(1000);
 
+		transmitter = false;
+		int tone_idx[6] = {0};
+
 		uint32_t startTime0 = micros();
 		for (int iter = 0; iter < 32; iter++) {
 			doubleBufferISR();
 		}
-		uint32_t elapsed0 =  micros()-startTime0;
-		std::cout << "Double buffer ISR task latent execution time: " << elapsed0 / 32 << " microseconds" << std::endl;
+		uint32_t elapsed0 =  (micros()-startTime0) / 32;
+		std::cout << "Double buffer ISR task latent execution time: " << elapsed0 << " microseconds" << std::endl;
 
 		uint32_t startTime = micros();
 		nok = 1;
 		for (int iter = 0; iter < 32; iter++) {
 			doubleBufferFunction();
 		}
-		uint32_t elapsed1 =  (micros()-startTime);
-		std::cout << "Double buffer task latent execution time: " << elapsed1 / 32 << " microseconds" << std::endl;
+		uint32_t elapsed1 =  (micros()-startTime) / 32 + 1000;
+		std::cout << "Double buffer task latent execution time: " << elapsed1 << " microseconds" << std::endl;
 
+		float damp_list[3] = {0.99995, 1, 0.9995};
+		bool press_list[12] = {false};
 		uint8_t TX_Message[8] = {0};
 		startTime = micros();
 		for (int iter = 0; iter < 32; iter++) {
-			scanKeysFunction(TX_Message);
+			scanKeysFunction(press_list, damp_list, TX_Message);
 		}
-		uint32_t elapsed2 =  (micros()-startTime);
-		std::cout << "Key scanning task latent execution time: " << elapsed2 / 32 << " microseconds" << std::endl;
+		uint32_t elapsed2 =  (micros()-startTime) / 32 + 1000;
+		std::cout << "Key scanning task latent execution time: " << elapsed2 << " microseconds" << std::endl;
 
+		std::string damp_str[3] = {"Normal", "Sustain", "Overdamp"};
+		std::string instru_list[3] = {"sawtooth", "sine", "piano"};
 		uint32_t ID;
 		uint8_t localRX[8];
 		startTime = micros();
 		for (int iter = 0; iter < 32; iter++) {
-			displayUpdateFunction(ID, localRX);
+			displayUpdateFunction(instru_list, damp_str, ID, localRX);
 		}
-		uint32_t elapsed3 =  (micros()-startTime);
-		std::cout << "Display update task latent execution time: " << elapsed3 / 32 << " microseconds" << std::endl;
+		uint32_t elapsed3 =  (micros()-startTime) / 32 + 1000;
+		std::cout << "Display update task latent execution time: " << elapsed3 << " microseconds" << std::endl;
 
 		uint8_t msgOut[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 		startTime = micros();
 		xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 		xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
 		CAN_TX(0x125, msgOut);
-		uint32_t elapsed4 =  (micros()-startTime) * 36;
+		uint32_t elapsed4 =  (micros()-startTime) * 36 + 1000;
 		std::cout << "Data transmission task latent execution time: " << elapsed4 << " microseconds" << std::endl;
 
 		uint8_t local_RX[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -626,13 +633,27 @@ void setup() {
 		xQueueSend(msgInQ, local_RX, portMAX_DELAY);
 		xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
 		rxMessage.receiveMessage(local_RX);
+		if(!transmitter){
+			for(int i = 0; i < 6;  i++){
+				if(i == 0 && local_RX[0] == 'P'){
+					tone_idx[0] = local_RX[2];
+				} else {
+					tone_idx[i] = 0;
+				}
+			}
+			if(local_RX[0] == 'P'){
+				nok = 1;
+			} else {
+				nok = 0;
+			}
+		}
 		__atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
-		uint32_t elapsed5 =  (micros()-startTime) * 36;
+		uint32_t elapsed5 =  (micros()-startTime) * 36 + 1000;
 		std::cout << "Data receiving task latent execution time: " << elapsed5 << " microseconds" << std::endl;
 
 		uint32_t total_elapsed = micros() - startTime0;
 		std::cout << "Total execution time: " << total_elapsed << " microseconds" << std::endl;
-		uint32_t utilisation = ((double)(elapsed0 + elapsed1 + elapsed2 + elapsed3 + elapsed4 + elapsed5) / total_elapsed) * 100;
+		uint32_t utilisation = (elapsed0 / 46. + elapsed1 / 17000. + elapsed2 / 20000. + elapsed3 / 100000. + elapsed4 / 60000. + elapsed5 / 25200.) * 100;
 
 		std::cout << "" << std::endl;
 		std::cout << "CPU utilisation: " << std::to_string(utilisation)  << "%" << std::endl;
