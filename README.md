@@ -33,7 +33,7 @@
     ...
   }
   ```
-  3.	A key was previously being pressed and is now released. In this case we used `std::find()` function to locate the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1. `std::distance` calculates the index position of the keynumber inside the `tone_idx` array.
+  2.	A key was previously being pressed and is now released. In this case we used `std::find()` function to locate the index in the array corresponding to the released key. The entry at that index will get set false. And nok will decrease by 1. `std::distance` calculates the index position of the keynumber inside the `tone_idx` array.
   ```
   for (int i = 0; i < 12; i++) {
     ...
@@ -48,7 +48,7 @@
     ...
   }
   ```
-  5.	A key was not pressed before and remains unpressed or was pressed and remains being pressed. Do nothing in this case.
+  3.	A key was not pressed before and remains unpressed or was pressed and remains being pressed. Do nothing in this case.
 
   The two figure below shows a comparison of key number storing operations under traditional method and decoupled key scanning.
   ![](4.png)
@@ -133,9 +133,84 @@ In the beat generating section, the entries stored in waveform_lut must only rep
   Because of the non-periodicity of a beat sound wave, it is not efficient to use it in combination with the RX/TX function as it would result in additional variables being created to detect whether a received instruction demands a beat to be generated since this would add workload in the `SampleISR()` function. A more practical way is to configure a single keyboard section as beat generating and the other 3 as instruments during compile time.
 
   ### Double buffer
+  
+  One issue that can occur when generating an audio sample is that it can become computationally expensive. This can occur when summing multiple waveforms in our waveform LUTs. If the ISR becomes too heavy for the CPU to bear it can lead to a variety of issues, such as, requiring to setup interrupts carefully or having conflicts with the freeRTOS system. One way to solve this problem is to reduce the size of the ISR and make it as efficient as possible. We can modify our sampleISR() function and make it so it only transfers samples to the DAC, dealing with sample generation in an alternative thread. To implement this synchronisation mechanism we make use of a Double Buffer, it works by splitting an array into two halves, the two halves are then read and written to atomically and when the pointers reach both ends they are swapped.
+    
+  ```c++
+  struct {
+  uint32_t sampleBuffer0[SAMPLE_BUFFER_SIZE / 2];
+  uint32_t sampleBuffer1[SAMPLE_BUFFER_SIZE / 2];
+  volatile bool writeBuffer1 = false;
+  SemaphoreHandle_t doubleBufferSemaphore;
+  } doubleBuffer; 
+  ```
+  In our implementation we created a struct which contained all the relevant data types. The semaphore is given on startup so the thread doesn't block on the first loop and its given when the buffer pointers swap and the semaphore is then taken again inside our sample generation task, the doubleBufferTask(). 
+  ```c++
+  doubleBuffer.doubleBufferSemaphore = xSemaphoreCreateBinary();
+  xSemaphoreGive(doubleBuffer.doubleBufferSemaphore);
+  ```
+  ```c++
+  void sampleISR() {
+  static uint32_t readCtr = 0;
+  if (readCtr == SAMPLE_BUFFER_SIZE / 2) {
+    readCtr = 0;
+    doubleBuffer.writeBuffer1 = !doubleBuffer.writeBuffer1;
+    xSemaphoreGiveFromISR(doubleBuffer.doubleBufferSemaphore, NULL);
+  }
+  ...
+  ```
+  ```c++
+  void doubleBufferTask(void *pvParameters) {
+  while (1) {
+    xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
+    ...
+  ```
+
+  ## DAC with DMA:
+  
+  Although we have not been able to integrate this feature we thought to still include it in our report. To improve upon the Double Buffer feature we can make use of Direct Memory Addressing, this is a feature present in the ARM cortex M4 which implements a hardware controller which can offload data transferring tasks off of the CPU. This would have been highly beneficial for our implementation as the DMA has timing and auto increment features and it would mean that we wouldn’t need to use an ISR at all and the DMA could handle transferring data from the double buffer to the DAC. The STM32 HAL APIs include an implementation of the DAC which can work with the DMA. This is what we attempted:
+
+  ```c++
+  uint32_t DAC_Init(DAC_HandleTypeDef hdac, DMA_HandleTypeDef hdma_dac){
+    // Initialize DAC + DMA Channel
+   
+     __HAL_RCC_DMA1_CLK_ENABLE();
+  
+    hdma_dac.Instance = DMA1_Channel3;
+    hdma_dac.Init.Request = DMA_REQUEST_6;
+    hdma_dac.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    hdma_dac.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_dac.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_dac.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_dac.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+    hdma_dac.Init.Mode = DMA_CIRCULAR;
+    hdma_dac.Init.Priority = DMA_PRIORITY_HIGH;
+  
+     HAL_DMA_Init(&hdma_dac);
+  
+    __HAL_RCC_DAC1_CLK_ENABLE();
+  
+    hdac.Instance = DAC1;
+  
+    return (uint32_t) HAL_DAC_Init(&hdac);
+   
+  }
+  
+  ``` 
+  This function would have been use to initialise both the DAC and DMA for our stm32l432kc board, it works by configuring both dac and dma handle types and running the HAL_XXX_Init() functions. Once the initialisationn was complete a link is created between the DAC and DMA and the HA_DAC_Start_DMA() function would have been executed which initiated the data transfer via DMA.
+
+  ```c++
+  uint32_t DAC_Start(DAC_HandleTypeDef hdac, DMA_HandleTypeDef hdma_dac, uint32_t buffer_size, uint32_t* dacBuffer ){
+  	// Start the DAC with DMA
+   	__HAL_LINKDMA(&hdac, DMA_Handle1, hdma_dac);
+  
+  	return (uint32_t) HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, dacBuffer, buffer_size, DAC_ALIGN_12B_R);
+  }
+  ```
+
 
 ## Communication
-## Threads timing analysis
+## Timing analysis
 To imeplement timing analysis of each task, we must let each task to run only once. To do this, we defined a `XXXFunction()` which is called repeatedly in a `XXXTask()`:
 ```
 void XXXTask(void * parameters) {
@@ -149,22 +224,23 @@ The table below summarised all the tasks with their priority and timing constrai
 | --- | --- | --- | --- |
 | display | 100ms | 16.519ms | 1 |
 | Key scanning | 20ms | 0.299ms | 4 |
-| ISR sampling | 0.045ms | 0.003ms | interrupt |
+| DoubleBuffer | 17ms | 2ms | 5 |
+| DoubleBuffer ISR | 0.045ms | 0.010ms | interrupt |
 | Data transmission | 60ms | 0.36ms | 2 |
 | Data decoding | 25.2ms | 0.468ms | 3 |
 
 The system's critical instant, $t_c$ must be less than the longest initiation interval, $\tau_n$ amoung the tasks. In this case, $\tau_n = 100ms$. The critical instant is calculated using:
 $$t_c = \sum_{k=1}^n \frac{\tau_n}{\tau_k}T_k$$
-Where $T_k$ is the latent execution time of each task. Based on the formula, the critical instant of our system is found to be 10.619ms, which is well below 100ms. The total execution time of each threads for exactly once was found to be 844.524ms. Therefore the percentage CPU utilisation is $\frac{16.519 + 0.299 + 0.003 + 0.36 + 0.468}{844.524} \times 100 = 2$ %.
+Where $T_k$ is the latent execution time of each task. Based on the formula, the critical instant of our system is found to be 38.4ms, which is well below 100ms. The total execution time of each threads for exactly once was found to be 844.524ms. Therefore the percentage CPU utilisation is $\frac{16.519 + 0.299 + 0.003 + 0.36 + 0.468}{844.524} \times 100 = 2$ %.
 ## Methods used to guarantee safe access and synchronization:
-  ### Semaphore-Based Mutex for Critical Sections:
-  In Inputs.cpp, Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Inputs.cpp, Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (currentInputs, previousInputs, rotation, rotationISR, currentStepSize, RX_Message) during updates or reads.
+  ### Semaphore-Based Mutex for critical Sections:
+  In Knob.cpp, and RX_message.cpp, a semaphore-based mutex is employed to protect critical sections of code where shared data is accessed or modified. For instance, in Knob.cpp, and RX_message.cpp, the xSemaphoreTake() and xSemaphoreGive() functions are used to acquire and release the semaphore, respectively, ensuring exclusive access to shared data structures (rotation, rotationISR, RX_Message) during updates or reads.
   Mutex Initialization:
-Each class (Inputs, Knob, RX_Message) initializes its mutex in its constructor (SysState.cpp) using xSemaphoreCreateMutex().
+Each class (Knob, RX_Message) initializes its mutex in its constructor (SysState.cpp) using xSemaphoreCreateMutex().
   Semaphore Timeouts:
 Semaphores are acquired with a timeout (portMAX_DELAY) to prevent deadlock situations where a task may indefinitely block waiting for a resource that never becomes available.
   ### Atomic Load and Store Operations:
   In Knob.cpp, atomic load and store operations (__atomic_load_n()) are used to safely access the rotationISR variable without the need for explicit mutex locking.
   Separation of Concerns:
-  Each class (Inputs, Knob, RX_Message) encapsulates its data and methods, promoting modular and structured code design.
-
+  Each class (Knob, RX_Message) encapsulates its data and methods, promoting modular and structured code design.
+  ### Queue:
