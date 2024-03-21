@@ -17,10 +17,17 @@
 
 #define SAMPLE_BUFFER_SIZE 1024
 
-bool receiver = true;
-bool transmitter = true;
+// #ifdef TEST
+	bool receiver = true;
+	bool transmitter = true;
+// #endif
 
 //DAC_HandleTypeDef hdac;
+struct {
+	int tone_idx[6];
+	int nok;
+	SemaphoreHandle_t mutex;  
+} scanKeys;
 
 struct {
   uint32_t sampleBuffer0[SAMPLE_BUFFER_SIZE/2];
@@ -30,7 +37,7 @@ struct {
 } doubleBuffer;
 
 Knob volumeKnob(8, 0, 1);
-Knob decayKnob(2, 0, 1);
+Knob dampKnob(2, 0, 1);
 Knob instrumentKnob(2, 0, 1);
 Knob octaveKnob(5, 0, 1);
 
@@ -74,20 +81,20 @@ void setRow(uint8_t rowidx){
 // 	// Serial.print(nok);
 // 	// If there's at least a key being presses, do something
 // 	if (nok != 0) {
-// 		// Decay for those keys that are being pressed
+// 		// damp for those keys that are being pressed
 // 		for (int i = 0; i < nok; i++) {
-// 			decay[i] *= decay_factor;
+// 			damp[i] *= damp_factor;
 // 		}
 // 		// tone_idx[i] = the period index corresponding to that particular key
 // 		// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
 // 		// instru = Selects the instrument, currrent is 0 - 3
 //     uint32_t instru = static_cast<uint32_t>(instrumentKnob.getRotationISR());
-// 		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * decay[0] +
-//  					waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * decay[1] +
-// 				 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * decay[2] +
-// 					waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * decay[3] +
-// 					waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * decay[4] +
-// 					waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * decay[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+// 		Vout = (waveform_luts[instru][tone_idx[0]][(t % Ts[tone_idx[0]])] * damp[0] +
+//  					waveform_luts[instru][tone_idx[1]][(t % Ts[tone_idx[1]])] * damp[1] +
+// 				 	waveform_luts[instru][tone_idx[2]][(t % Ts[tone_idx[2]])] * damp[2] +
+// 					waveform_luts[instru][tone_idx[3]][(t % Ts[tone_idx[3]])] * damp[3] +
+// 					waveform_luts[instru][tone_idx[4]][(t % Ts[tone_idx[4]])] * damp[4] +
+// 					waveform_luts[instru][tone_idx[5]][(t % Ts[tone_idx[5]])] * damp[5]) / std::max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
 //     // Vout = Vout >> (12 - localRotation);
 //     // Sets audio resolution to 12
 //     analogWriteResolution(12);
@@ -95,15 +102,15 @@ void setRow(uint8_t rowidx){
 //     analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
 //     t ++; // increment timer
 //   }
-//   	// If no keys are being pressed the timer resets along with the decay factors
+//   	// If no keys are being pressed the timer resets along with the damp factors
 // 	else {
 // 		t = 0;
-// 		decay[0] = 1;
-// 		decay[1] = 1;
-// 		decay[2] = 1;
-// 		decay[3] = 1;
-// 		decay[4] = 1;
-// 		decay[5] = 1;
+// 		damp[0] = 1;
+// 		damp[1] = 1;
+// 		damp[2] = 1;
+// 		damp[3] = 1;
+// 		damp[4] = 1;
+// 		damp[5] = 1;
 // 	}
 // }
 
@@ -135,7 +142,6 @@ void CAN_TX_ISR (void) {
 }
 
 void scanKeysFunction(uint8_t* TX_Message) {
-
 	for (int i = 0; i < 12; i++) {
 		setRow(i / 4); // Floor division
 		delayMicroseconds(3);
@@ -143,11 +149,18 @@ void scanKeysFunction(uint8_t* TX_Message) {
 		// 1: A key was not presses before and is now being presses
 		if (!HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && !press_list[i]) {
 			press_list[i] = true; // Set the "is-pressed" entry for that key to true
-			tone_idx[nok] = i + 1 + octave * 12;
+			if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+				// Critical section
+				// Perform operations inside the critical section
+				tone_idx[nok] = i + 1 + octave * 12;
+				nok ++; // Increase the no. of key being presses
+				xSemaphoreGive(scanKeys.mutex); // Release the mutex
+			} else {
+				// Handle semaphore acquisition failure
+			}
 			TX_Message[0] = 'P';
 			TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
 			key = key + keystrings[i + octave * 12];
-			nok ++; // Increase the no. of key being presses
       if(transmitter){
         xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
       }
@@ -157,14 +170,14 @@ void scanKeysFunction(uint8_t* TX_Message) {
 			press_list[i] = false; // Set the "is-pressed" entry for that key to true
 			key = "";
 			TX_Message[0] = 'R';
-      TX_Message[2] = i;
-			nok --;
-			int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1);
+      		TX_Message[2] = i;
+			int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1 + octave * 12);
 			int idx = std::distance(tone_idx, p);
 			tone_idx[idx] = 0;
-      if(transmitter){
-        xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-      }
+			nok --;
+		if(transmitter) {
+			xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+		}
 		}
 		// 3: A key was not presses and is nor currently being presses or a key was presses and is still being pressed
 		// Skip the key detetction for those keys
@@ -175,7 +188,7 @@ void scanKeysFunction(uint8_t* TX_Message) {
 
 	volumeKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8)) +
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
-  instrumentKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
+	dampKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 
 	setRow(4);
@@ -185,7 +198,7 @@ void scanKeysFunction(uint8_t* TX_Message) {
 	octaveKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
 	instru = instrumentKnob.getRotationISR();
-	decay_factor = decay_list[decayKnob.getRotationISR()];
+	damp_factor = damp_list[dampKnob.getRotationISR()];
 	octave = octaveKnob.getRotationISR();
 }
 
@@ -194,17 +207,15 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
     u8g2.clearBuffer();         // clear the internal memory
 
     u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
-    u8g2.drawStr(2, 10, "Music Synth");  // write something to the internal memory
 	std::string display_vol = "Vol: " + std::to_string(volumeKnob.getRotation() * 125 / 10) + "%";
     u8g2.drawStr(2, 20, display_vol.c_str());
-	u8g2.setCursor(100, 30);
-	u8g2.print(instrumentKnob.getRotation());
-	u8g2.setCursor(120, 30);
-	u8g2.print(octaveKnob.getRotation() + 1);
-	u8g2.setCursor(0, 30);
-	u8g2.print(decayKnob.getRotation());
+	u8g2.setCursor(2, 30);
+	u8g2.print(instru_list[instrumentKnob.getRotation()].c_str());
+	std::string octave_str = "Octave: " + std::to_string(octaveKnob.getRotation() + 1);
+	u8g2.drawStr(60, 20, octave_str.c_str());
+	u8g2.drawStr(60, 30, damp_str[dampKnob.getRotation()].c_str());
     // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-    u8g2.drawStr(50, 30, key.c_str());
+    u8g2.drawStr(2, 10, key.c_str());
     // xSemaphoreGive(sysState.mutex);
     memcpy(localRX, rxMessage.getRX_Message(), 8);
 
@@ -244,6 +255,57 @@ void CAN_TX_Function(uint8_t* msgOut) {
   //     CAN_TX(messageID4, msgOut);
   //   #endif
   // #endif
+}
+
+void doubleBufferFunction() {
+    for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
+
+		uint32_t localRotation = volumeKnob.getRotationISR();
+		// Serial.print(nok);
+		// If there's at least a key being presses, do something
+		if (nok != 0) {
+			// damp for those keys that are being pressed
+			for (int i = 0; i < nok; i++) {
+				damp[i] *= damp_factor;
+			}
+			// tone_idx[i] = the period index corresponding to that particular key
+			// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
+			// instru = Selects the instrument, currrent is 0 - 3
+			// uint32_t instru = instrumentKnob.getRotationISR();
+			Vout = (waveform_lut[instru][(t * 917 / Ts[tone_idx[0]]) % 917] * damp[0] * (Ts[tone_idx[0]] != 1) +
+							waveform_lut[instru][(t * 917 / Ts[tone_idx[1]]) % 917] * damp[1] * (Ts[tone_idx[1]] != 1) +
+							waveform_lut[instru][(t * 917 / Ts[tone_idx[2]]) % 917] * damp[2] * (Ts[tone_idx[2]] != 1) +
+							waveform_lut[instru][(t * 917 / Ts[tone_idx[3]]) % 917] * damp[3] * (Ts[tone_idx[3]] != 1) +
+							waveform_lut[instru][(t * 917 / Ts[tone_idx[4]]) % 917] * damp[4] * (Ts[tone_idx[4]] != 1) +
+							waveform_lut[instru][(t * 917 / Ts[tone_idx[5]]) % 917] * damp[5] * (Ts[tone_idx[5]] != 1)) / max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
+
+			// analogWriteResolution(12);
+			// analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
+
+			Vout = Vout >> (8 - localRotation);
+			t++; // increment timer
+		}
+		// If no keys are being pressed the timer resets along with the damp factors
+		else {
+			t = 0;
+			damp[0] = 1;
+			damp[1] = 1;
+			damp[2] = 1;
+			damp[3] = 1;
+			damp[4] = 1;
+			damp[5] = 1;
+			Vout= 0;
+		}
+
+		if (doubleBuffer.writeBuffer1){
+			// doubleBuffer.sampleBuffer1[writeCtr] = Vout + 128;
+			doubleBuffer.sampleBuffer1[writeCtr] = Vout;
+		}
+		else{
+			// doubleBuffer.sampleBuffer0[writeCtr] = Vout + 128;
+			doubleBuffer.sampleBuffer0[writeCtr] = Vout;
+		}
+    }
 }
 
 void scanKeysTask(void * pvParameters) {
@@ -298,70 +360,29 @@ void doubleBufferISR(){
 
   	if (doubleBuffer.writeBuffer1){
 		//HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R,doubleBuffer.sampleBuffer0[readCtr++]);
-		analogWriteResolution(12);
+		// analogWriteResolution(12);
 		analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer0[readCtr++]);
   	}
   else {
 		//HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R,doubleBuffer.sampleBuffer1[readCtr++]);
-		analogWriteResolution(12);
+		// analogWriteResolution(12);
 		analogWrite(OUTR_PIN, doubleBuffer.sampleBuffer1[readCtr++]);
   	}
 }
 
 void doubleBufferTask(void* pvParameters){
 
-  while(1){
-
-    xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
-    for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE/2; writeCtr++) {
-
-	  uint32_t localRotation = volumeKnob.getRotationISR();
-	  // Serial.print(nok);
-	  // If there's at least a key being presses, do something
-	  if (nok != 0) {
-	  	// Decay for those keys that are being pressed
-	  	for (int i = 0; i < nok; i++) {
-	  		decay[i] *= decay_factor;
-	  	}
-	  	// tone_idx[i] = the period index corresponding to that particular key
-	  	// Ts = the 13 periods of the keys, the first period is 1 corresponding to no keys
-	  	// instru = Selects the instrument, currrent is 0 - 3
-      uint32_t instru = instrumentKnob.getRotationISR();
-		Vout = (waveform_lut[instru][(t * 917 / Ts[tone_idx[0]]) % 917] * decay[0] * (Ts[tone_idx[0]] != 1) +
-					  waveform_lut[instru][(t * 917 / Ts[tone_idx[1]]) % 917] * decay[1] * (Ts[tone_idx[1]] != 1) +
-					  waveform_lut[instru][(t * 917 / Ts[tone_idx[2]]) % 917] * decay[2] * (Ts[tone_idx[2]] != 1) +
-					  waveform_lut[instru][(t * 917 / Ts[tone_idx[3]]) % 917] * decay[3] * (Ts[tone_idx[3]] != 1) +
-					  waveform_lut[instru][(t * 917 / Ts[tone_idx[4]]) % 917] * decay[4] * (Ts[tone_idx[4]] != 1) +
-					  waveform_lut[instru][(t * 917 / Ts[tone_idx[5]]) % 917] * decay[5] * (Ts[tone_idx[5]] != 1)) / max(nok, 1); // Divide the amplitude by the totoal number of keys being pressed
-
-        // analogWriteResolution(12);
-        // analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
-
-		Vout = Vout >> (8 - localRotation);
-        t++; // increment timer
-      }
-  	  // If no keys are being pressed the timer resets along with the decay factors
-	  else {
-	  	t = 0;
-	  	decay[0] = 1;
-	  	decay[1] = 1;
-	  	decay[2] = 1;
-	  	decay[3] = 1;
-	  	decay[4] = 1;
-	  	decay[5] = 1;
-		Vout= 0;
-	  }
-
-	  if (doubleBuffer.writeBuffer1){
-		// doubleBuffer.sampleBuffer1[writeCtr] = Vout + 128;
-		doubleBuffer.sampleBuffer1[writeCtr] = Vout;
-	   }
-       else{
-		// doubleBuffer.sampleBuffer0[writeCtr] = Vout + 128;
-		doubleBuffer.sampleBuffer0[writeCtr] = Vout;
-	   }
-    }
-  }
+	while(1){
+		xSemaphoreTake(doubleBuffer.doubleBufferSemaphore, portMAX_DELAY);
+		if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+			// Critical section
+			// Perform operations inside the critical section
+			doubleBufferFunction();
+			xSemaphoreGive(scanKeys.mutex); // Release the mutex
+		} else {
+			// Handle semaphore acquisition failure
+		}
+	}
 }
 
 // void dacInitializationTask(void * pvParameters) {
@@ -447,8 +468,10 @@ void setup() {
 	TaskHandle_t displayUpdateHandle = NULL;
 	TaskHandle_t CAN_RXHandle = NULL;
 	TaskHandle_t CAN_TXHandle = NULL;
-  TaskHandle_t doubleBufferHandle = NULL;
+  	TaskHandle_t doubleBufferHandle = NULL;
 	TaskHandle_t dacInitializationHandle = NULL;
+
+	scanKeys.mutex = xSemaphoreCreateMutex();
 
 	#ifndef TEST_SCANKEYS
 
@@ -475,7 +498,7 @@ void setup() {
 			"scanKeys",		/* Text name for the task */
 			256,      		/* Stack size in words, not bytes */
 			NULL,			/* Parameter passed into the task */
-			2,			/* Task priority */
+			3,			/* Task priority */
 			&scanKeysHandle /* Pointer to store the task handle */
 		);
 
@@ -506,19 +529,40 @@ void setup() {
         	"doubleBuffer",
         	256,
         	NULL,
-        	1,
+        	2,
         	&doubleBufferHandle
 		);
 
 	#endif
 
-	#ifdef TEST_SCANKEYS
-		uint8_t TX_Message[8] = {0};
+	#ifdef TEST
+		std::cout << "" << std::endl;
+		std::cout << "Hardware timing diagnosis started." << std::endl;
+		std::cout << "" << std::endl;
+		HAL_Delay(1000);
+
+		uint32_t startTime0 = micros();
+		for (int iter = 0; iter < 32; iter++) {
+			doubleBufferISR();
+		}
+		uint32_t elapsed0 =  micros()-startTime0;
+		std::cout << "Double buffer ISR task latent execution time: " << elapsed0 / 32 << " microseconds" << std::endl;
+
 		uint32_t startTime = micros();
+		nok = 1;
+		for (int iter = 0; iter < 32; iter++) {
+			doubleBufferFunction();
+		}
+		uint32_t elapsed1 =  micros()-startTime;
+		std::cout << "Double buffer task latent execution time: " << elapsed1 << " microseconds" << std::endl;
+
+		uint8_t TX_Message[8] = {0};
+		startTime = micros();
 		for (int iter = 0; iter < 32; iter++) {
 			scanKeysFunction(TX_Message);
 		}
-		std::cout << "Key scanning task latent execution time: " << (micros()-startTime) / 32 << " microseconds" << std::endl;
+		uint32_t elapsed2 =  (micros()-startTime) / 32;
+		std::cout << "Key scanning task latent execution time: " << elapsed2 << " microseconds" << std::endl;
 
 		uint32_t ID;
 		uint8_t localRX[8];
@@ -526,30 +570,34 @@ void setup() {
 		for (int iter = 0; iter < 32; iter++) {
 			displayUpdateFunction(ID, localRX);
 		}
-		std::cout << "Display update task latent execution time: " << (micros()-startTime) / 32 << " microseconds" << std::endl;
+		uint32_t elapsed3 =  (micros()-startTime) / 32;
+		std::cout << "Display update task latent execution time: " << elapsed3 << " microseconds" << std::endl;
 
-		// uint8_t msgOut[8];
-		// startTime = micros();
-		// for (int iter = 0; iter < 1; iter++) {
-		// 	CAN_TX_Function(msgOut);
-		// }
-		// std::cout << "Data transmission task latent execution time: " << (micros()-startTime) / 1 << " microseconds" << std::endl;
-
-		// uint8_t local_RX[8];
-		// startTime = micros();
-		// for (int iter = 0; iter < 1; iter++) {
-		// 	CAN_RX_Function(local_RX);
-		// }
-		// std::cout << "Data receiving task latent execution time: " << (micros()-startTime) / 1 << " microseconds" << std::endl;
-
-		nok = 1;
+		uint8_t msgOut[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 		startTime = micros();
-		for (int iter = 0; iter < 32; iter++) {
-			sampleISR();
-		}
-		std::cout << "DAC ISR task latent execution time: " << (micros()-startTime) / 32 << " microseconds" << std::endl;
+		xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+		xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
+		CAN_TX(0x125, msgOut);
+		uint32_t elapsed4 =  (micros()-startTime) * 36;
+		std::cout << "Data transmission task latent execution time: " << elapsed4 << " microseconds" << std::endl;
+
+		uint8_t local_RX[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+		startTime = micros();
+		xQueueSend(msgInQ, local_RX, portMAX_DELAY);
+		xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
+		rxMessage.receiveMessage(local_RX);
+		__atomic_store_n(&currentStepSize, rxMessage.getStepSize(), __ATOMIC_RELAXED);
+		uint32_t elapsed5 =  (micros()-startTime) * 36;
+		std::cout << "Data receiving task latent execution time: " << elapsed5 << " microseconds" << std::endl;
+
+		uint32_t total_elapsed = micros() - startTime0;
+		std::cout << "Total execution time: " << total_elapsed << " microseconds" << std::endl;
+		uint32_t utilisation = ((double)(elapsed0 + elapsed1 + elapsed2 + elapsed3 + elapsed4 + elapsed5) / total_elapsed) * 100;
 
 		std::cout << "" << std::endl;
+		std::cout << "CPU utilisation: " << std::to_string(utilisation)  << "%" << std::endl;
+		std::cout << "" << std::endl;
+		std::cout << "Hardware diagnosis complete." << std::endl;
 		while(1);
 	#endif
 

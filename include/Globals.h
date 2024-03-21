@@ -44,6 +44,7 @@ extern const uint32_t key_cols[4];
 //// Additional variables
 extern std::string key;
 extern int keynum;
+
 extern int tone_idx[6]; // The indices (0 - 12) of the waveform periods that the are being selected to play in the audio
 extern std::vector<std::vector<uint8_t>> waveform_lut; // the waveform lut stores the insturment waveforms.
 extern int nok; // No. of keys currently being presses simutaneously
@@ -54,11 +55,12 @@ extern bool press_list[12];
 extern std::string keystrings[72];
 extern uint16_t Ts[73];
 extern std::string instru_list[3];
+extern std::string damp_str[3];
 
 extern int t; // Initialised timer
-extern float decay_list[3];
-extern float decay[6];
-extern float decay_factor;
+extern float damp_list[3];
+extern float damp[6];
+extern float damp_factor;
 extern uint16_t Vout;
 extern int octave;
 
