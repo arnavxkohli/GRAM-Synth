@@ -141,7 +141,7 @@ void CAN_TX_ISR (void) {
 	xSemaphoreGiveFromISR(CAN_TX_Semaphore, NULL);
 }
 
-void scanKeysFunction(uint8_t* TX_Message) {
+void scanKeysFunction(bool* press_list, float* damp_list, uint8_t* TX_Message) {
 	for (int i = 0; i < 12; i++) {
 		setRow(i / 4); // Floor division
 		delayMicroseconds(3);
@@ -154,27 +154,34 @@ void scanKeysFunction(uint8_t* TX_Message) {
 				// Perform operations inside the critical section
 				tone_idx[nok] = i + 1 + octave * 12;
 				nok ++; // Increase the no. of key being presses
+				key = keystrings[i + octave * 12];
 				xSemaphoreGive(scanKeys.mutex); // Release the mutex
 			} else {
 				// Handle semaphore acquisition failure
 			}
 			TX_Message[0] = 'P';
 			TX_Message[2] = i; // Assign number of note played to 3rd entry in transmission
-			key = key + keystrings[i + octave * 12];
-      if(transmitter){
-        xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
-      }
+		if(transmitter) {
+			xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
+		}
 		}
 		// 2: A key was presses before and is now being released
 		else if (HAL_GPIO_ReadPin(GPIOA, key_cols[i % 4]) && press_list[i]) {
 			press_list[i] = false; // Set the "is-pressed" entry for that key to true
-			key = "";
+			if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+				// Critical section
+				// Perform operations inside the critical section
+				key = "";
+				int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1 + octave * 12);
+				int idx = std::distance(tone_idx, p);
+				tone_idx[idx] = 0;
+				nok --;
+				xSemaphoreGive(scanKeys.mutex); // Release the mutex
+			} else {
+				// Handle semaphore acquisition failure
+			}
 			TX_Message[0] = 'R';
       		TX_Message[2] = i;
-			int* p = std::find(std::begin(tone_idx), std::end(tone_idx), i + 1 + octave * 12);
-			int idx = std::distance(tone_idx, p);
-			tone_idx[idx] = 0;
-			nok --;
 		if(transmitter) {
 			xQueueSend(msgOutQ, TX_Message, portMAX_DELAY);
 		}
@@ -197,12 +204,20 @@ void scanKeysFunction(uint8_t* TX_Message) {
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3)));
 	octaveKnob.updateRotation(std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9)) +
 		std::to_string(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7)));
-	instru = instrumentKnob.getRotationISR();
-	damp_factor = damp_list[dampKnob.getRotationISR()];
-	octave = octaveKnob.getRotationISR();
+
+	if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+		// Critical section
+		// Perform operations inside the critical section
+		instru = instrumentKnob.getRotationISR();
+		damp_factor = damp_list[dampKnob.getRotationISR()];
+		octave = octaveKnob.getRotationISR();
+		xSemaphoreGive(scanKeys.mutex); // Release the mutex
+	} else {
+		// Handle semaphore acquisition failure
+	}
 }
 
-void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
+void displayUpdateFunction(std::string* instru_list, std::string* damp_str, uint32_t ID, uint8_t* localRX) {
     //Update display
     u8g2.clearBuffer();         // clear the internal memory
 
@@ -214,9 +229,16 @@ void displayUpdateFunction(uint32_t ID, uint8_t* localRX) {
 	std::string octave_str = "Octave: " + std::to_string(octaveKnob.getRotation() + 1);
 	u8g2.drawStr(60, 20, octave_str.c_str());
 	u8g2.drawStr(60, 30, damp_str[dampKnob.getRotation()].c_str());
-    // xSemaphoreTake(sysState.mutex, portMAX_DELAY);
-    u8g2.drawStr(2, 10, key.c_str());
-    // xSemaphoreGive(sysState.mutex);
+
+    if (xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+		// Critical section
+		// Perform operations inside the critical section
+		u8g2.drawStr(2, 10, key);
+		xSemaphoreGive(scanKeys.mutex); // Release the mutex
+	} else {
+		// Handle semaphore acquisition failure
+	}
+
     memcpy(localRX, rxMessage.getRX_Message(), 8);
 
     // u8g2.setCursor(50,30);
@@ -313,10 +335,12 @@ void scanKeysTask(void * pvParameters) {
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	uint8_t TX_Message[8] = {0};
 	TX_Message[1] = 4; // Octave to be changed later - try auto assigning this.
+	float damp_list[3] = {0.99995, 1, 0.9995};
+	bool press_list[12] = {false};
 
 	while(1) {
 		vTaskDelayUntil( &xLastWakeTime, xFrequency );
-		scanKeysFunction(TX_Message);
+		scanKeysFunction(press_list, damp_list, TX_Message);
 	}
 }
 
@@ -325,10 +349,12 @@ void displayUpdateTask(void * pvParameters){
 	TickType_t xLastWakeTime = xTaskGetTickCount();
 	uint32_t ID;
 	uint8_t localRX[8];
+	std::string damp_str[3] = {"Normal", "Sustain", "Overdamp"};
+	std::string instru_list[3] = {"sawtooth", "sine", "piano"};
 
-	while(1){
+	while(1) {
 		vTaskDelayUntil( &xLastWakeTime, xFrequency );
-		displayUpdateFunction(ID, localRX);
+		displayUpdateFunction(instru_list, damp_str, ID, localRX);
 	}
 }
 
@@ -349,7 +375,7 @@ void CAN_TX_Task (void * pvParameters) {
 }
 
 void doubleBufferISR(){
-  static uint32_t readCtr = 0;
+	static uint32_t readCtr = 0;
 //   static uint32_t Data;
 
   if (readCtr == SAMPLE_BUFFER_SIZE/2) {
@@ -553,16 +579,16 @@ void setup() {
 		for (int iter = 0; iter < 32; iter++) {
 			doubleBufferFunction();
 		}
-		uint32_t elapsed1 =  micros()-startTime;
-		std::cout << "Double buffer task latent execution time: " << elapsed1 << " microseconds" << std::endl;
+		uint32_t elapsed1 =  (micros()-startTime);
+		std::cout << "Double buffer task latent execution time: " << elapsed1 / 32 << " microseconds" << std::endl;
 
 		uint8_t TX_Message[8] = {0};
 		startTime = micros();
 		for (int iter = 0; iter < 32; iter++) {
 			scanKeysFunction(TX_Message);
 		}
-		uint32_t elapsed2 =  (micros()-startTime) / 32;
-		std::cout << "Key scanning task latent execution time: " << elapsed2 << " microseconds" << std::endl;
+		uint32_t elapsed2 =  (micros()-startTime);
+		std::cout << "Key scanning task latent execution time: " << elapsed2 / 32 << " microseconds" << std::endl;
 
 		uint32_t ID;
 		uint8_t localRX[8];
@@ -570,8 +596,8 @@ void setup() {
 		for (int iter = 0; iter < 32; iter++) {
 			displayUpdateFunction(ID, localRX);
 		}
-		uint32_t elapsed3 =  (micros()-startTime) / 32;
-		std::cout << "Display update task latent execution time: " << elapsed3 << " microseconds" << std::endl;
+		uint32_t elapsed3 =  (micros()-startTime);
+		std::cout << "Display update task latent execution time: " << elapsed3 / 32 << " microseconds" << std::endl;
 
 		uint8_t msgOut[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 		startTime = micros();

@@ -42,7 +42,7 @@ extern const GPIO_PinState gpio_state[2];
 // This stores the gpio pinouts corresponding to column idx C0 - 3
 extern const uint32_t key_cols[4];
 //// Additional variables
-extern std::string key;
+extern char* key;
 extern int keynum;
 
 extern int tone_idx[6]; // The indices (0 - 12) of the waveform periods that the are being selected to play in the audio
@@ -50,16 +50,13 @@ extern std::vector<std::vector<uint8_t>> waveform_lut; // the waveform lut store
 extern int nok; // No. of keys currently being presses simutaneously
 extern int instru; // Instrument idx, current there are 4 instruments
 // Recodes whether a key is being presses. This filters out the pressed keys and enables the key to be detected in the order of their presses
-extern bool press_list[12];
 
-extern std::string keystrings[72];
+extern char* keystrings[72];
 extern uint16_t Ts[73];
 extern std::string instru_list[3];
-extern std::string damp_str[3];
 
 extern int t; // Initialised timer
-extern float damp_list[3];
-extern float damp[6];
+extern float damp[6]; ////
 extern float damp_factor;
 extern uint16_t Vout;
 extern int octave;
