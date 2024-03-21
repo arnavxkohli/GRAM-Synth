@@ -1,6 +1,5 @@
 #include "Globals.h"
 #include "Knob.h"
-#include "RX_Message.h"
 #include "waveform.h"
 #include <Arduino.h>
 #include <ES_CAN.h>
@@ -48,7 +47,6 @@ Knob dampKnob(2, 0, 1);
 Knob instrumentKnob(2, 0, 1);
 Knob octaveKnob(5, 0, 1);
 
-RX_Message rxMessage;
 QueueHandle_t msgInQ;
 QueueHandle_t msgOutQ;
 
@@ -192,17 +190,6 @@ void displayUpdateFunction(std::string *instru_list, std::string *damp_str,
     xSemaphoreGive(scanKeys.mutex); // Release the mutex
   }
 
-  memcpy(localRX, rxMessage.getRX_Message(), 8);
-
-  // u8g2.setCursor(50,30);
-  // u8g2.print((char) localRX[0]);
-  // u8g2.print(nok);
-  // u8g2.print(keynum);
-  // u8g2.setCursor(70,30);
-  // u8g2.print((char) localRX[0]);
-  // u8g2.print(localRX[1]);
-  // u8g2.print(localRX[2]);
-
   u8g2.sendBuffer(); // transfer internal memory to the display
 
   // Toggle LED
@@ -211,8 +198,11 @@ void displayUpdateFunction(std::string *instru_list, std::string *damp_str,
 
 void CAN_RX_Function(uint8_t *local_RX) {
   xQueueReceive(msgInQ, local_RX, portMAX_DELAY);
-  rxMessage.receiveMessage(local_RX);
-  if (!transmitter) {
+
+  if (!transmitter || xSemaphoreTake(scanKeys.mutex, portMAX_DELAY) == pdTRUE) {
+    // Critical section
+    // Perform operations inside the critical section
+
     for (int i = 0; i < 6; i++) {
       if (i == 0 && local_RX[0] == 'P') {
         tone_idx[0] = local_RX[2];
@@ -225,43 +215,27 @@ void CAN_RX_Function(uint8_t *local_RX) {
     } else {
       nok = 0;
     }
+
+    xSemaphoreGive(scanKeys.mutex);
   }
-  // __atomic_store_n(&currentStepSize, rxMessage.getStepSize(),
-  // __ATOMIC_RELAXED);
 }
 
 void CAN_TX_Function(uint8_t *msgOut) {
   xQueueReceive(msgOutQ, msgOut, portMAX_DELAY);
   xSemaphoreTake(CAN_TX_Semaphore, portMAX_DELAY);
   CAN_TX(0x125, msgOut);
-  // #ifdef KEYBOARDNUM
-  //   #if KEYBOARDNUM == 1
-  //     CAN_TX(messageID1, msgOut);
-  //   #elif KEYBOARDNUM == 2
-  //     CAN_TX(messageID2, msgOut);
-  //   #elif KEYBOARDNUM == 3
-  //     CAN_TX(messageID3, msgOut);
-  //   #elif KEYBOARDNUM == 4
-  //     CAN_TX(messageID4, msgOut);
-  //   #endif
-  // #endif
 }
 
 void doubleBufferFunction() {
   for (uint32_t writeCtr = 0; writeCtr < SAMPLE_BUFFER_SIZE / 2; writeCtr++) {
 
     uint32_t localRotation = volumeKnob.getRotationISR();
-    // Serial.print(nok);
     // If there's at least a key being presses, do something
     if (nok != 0) {
       // damp for those keys that are being pressed
       for (int i = 0; i < nok; i++) {
         damp[i] *= damp_factor;
       }
-      // tone_idx[i] = the period index corresponding to that particular key
-      // Ts = the 13 periods of the keys, the first period is 1 corresponding to
-      // no keys instru = Selects the instrument, currrent is 0 - 3 uint32_t
-      // instru = instrumentKnob.getRotationISR();
       Vout = (waveform_lut[instru][(t * 917 / Ts[tone_idx[0]]) % 917] *
                   damp[0] * (Ts[tone_idx[0]] != 1) +
               waveform_lut[instru][(t * 917 / Ts[tone_idx[1]]) % 917] *
@@ -276,9 +250,6 @@ void doubleBufferFunction() {
                   damp[5] * (Ts[tone_idx[5]] != 1)) /
              max(nok, 1); // Divide the amplitude by the totoal number of keys
                           // being pressed
-
-      // analogWriteResolution(12);
-      // analogWrite(OUTR_PIN, Vout >> (12 - localRotation));
 
       Vout = Vout >> (8 - localRotation);
       t++; // increment timer
