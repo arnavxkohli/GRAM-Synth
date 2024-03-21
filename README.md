@@ -1,11 +1,11 @@
 # GRAM's Music Synthesizer
 
 # Table of Contents
-1. [Key Press Detection](##Key-press-detection)
-2. [Display](##Display)
+1. [Key Press Detection](#Key-press-detection)
+2. [Display](#Display)
 3. [User Interface](#User-interface)
 4. [Instrument Waveform Generation](#Instrument-waveform-generation)
-5. [Audio](##Audio)
+5. [Audio](#Audio)
 6. [DAC with DMA](#DAC-with-DMA)
 7. [Communication](#Communication)
 8. [Timing Analysis](#Timing-analysis)
